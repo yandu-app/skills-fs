@@ -16,6 +16,7 @@ Run:
 ```sh
 make test
 make coverage
+make race
 ```
 
 `make coverage` fails if total repository statement coverage drops below 85%.
