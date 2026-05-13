@@ -26,6 +26,9 @@ Host bindings own only:
 ## Package Layout
 
 - `core`: public embedded filesystem API and in-memory semantics.
+- `adapter`: adapter contracts shared by FUSE and WebDAV.
+- `adapter/fuse`: FUSE server package boundary. The current bootstrap uses a no-driver stub until platform-specific dependencies are introduced.
+- `adapter/webdav`: WebDAV fallback package boundary. The current bootstrap uses a no-listener stub until HTTP semantics are implemented.
 - `bench`: required benchmark entry points.
 - `docs`: handoff, architecture, testing, and milestone documents.
 
