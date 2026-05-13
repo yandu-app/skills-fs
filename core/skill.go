@@ -6,17 +6,20 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"sync"
 	"text/template"
 )
 
 var skillNameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 
 type SkillGenerator struct {
-	root string
+	root   string
+	mu     sync.RWMutex
+	skills map[string]SkillConfig
 }
 
 func NewSkillGenerator(root string) *SkillGenerator {
-	return &SkillGenerator{root: root}
+	return &SkillGenerator{root: root, skills: make(map[string]SkillConfig)}
 }
 
 func (g *SkillGenerator) Generate(cfg SkillConfig) error {
@@ -68,7 +71,13 @@ func (g *SkillGenerator) Generate(cfg SkillConfig) error {
 	if body.Len() == 0 {
 		return posix(EINVAL, OpWrite, cfg.Name, nil)
 	}
-	return os.WriteFile(filepath.Join(dir, "SKILL.md"), body.Bytes(), 0o644)
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), body.Bytes(), 0o644); err != nil {
+		return err
+	}
+	g.mu.Lock()
+	g.skills[cfg.Name] = cfg
+	g.mu.Unlock()
+	return nil
 }
 
 func (g *SkillGenerator) Remove(name string) error {
@@ -78,7 +87,48 @@ func (g *SkillGenerator) Remove(name string) error {
 	if !skillNameRE.MatchString(name) {
 		return posix(EINVAL, OpWrite, name, nil)
 	}
-	return os.RemoveAll(filepath.Join(g.root, name))
+	if err := os.RemoveAll(filepath.Join(g.root, name)); err != nil {
+		return err
+	}
+	g.mu.Lock()
+	delete(g.skills, name)
+	g.mu.Unlock()
+	return nil
+}
+
+func (g *SkillGenerator) List() []SkillConfig {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	out := make([]SkillConfig, 0, len(g.skills))
+	for _, cfg := range g.skills {
+		out = append(out, cfg)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+func (g *SkillGenerator) Exists(name string) bool {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	_, ok := g.skills[name]
+	return ok
+}
+
+func (g *SkillGenerator) ReadSkillFile(name string) ([]byte, error) {
+	if !skillNameRE.MatchString(name) {
+		return nil, posix(EINVAL, OpRead, name, nil)
+	}
+	g.mu.RLock()
+	_, ok := g.skills[name]
+	g.mu.RUnlock()
+	if !ok {
+		return nil, posix(ENOENT, OpRead, name, nil)
+	}
+	data, err := os.ReadFile(filepath.Join(g.root, name, "SKILL.md"))
+	if err != nil {
+		return nil, err
+	}
+	return data, nil
 }
 
 func validateSkillConfig(cfg SkillConfig) error {

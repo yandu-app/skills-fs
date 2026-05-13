@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -113,6 +114,19 @@ func (fs *FileSystem) Stat(path string, caller CallerIdentity) (Stat, error) {
 	if path == "/sys/metrics" {
 		return Stat{Path: path, Kind: KindBlob, Mode: 0o444, UID: fs.cfg.DefaultUID, GID: fs.cfg.DefaultGID, Size: int64(len(fs.metrics.Prometheus()))}, nil
 	}
+	if path == "/skills" {
+		return Stat{Path: path, Kind: KindDir, Mode: 0o555, UID: fs.cfg.DefaultUID, GID: fs.cfg.DefaultGID}, nil
+	}
+	if name, ok := skillDirPath(path); ok && fs.skills.Exists(name) {
+		return Stat{Path: path, Kind: KindDir, Mode: 0o555, UID: fs.cfg.DefaultUID, GID: fs.cfg.DefaultGID}, nil
+	} else if name, ok := skillFilePath(path); ok {
+		data, readErr := fs.skills.ReadSkillFile(name)
+		if readErr != nil {
+			err = readErr
+			return Stat{}, readErr
+		}
+		return Stat{Path: path, Kind: KindBlob, Mode: 0o444, UID: fs.cfg.DefaultUID, GID: fs.cfg.DefaultGID, Size: int64(len(data))}, nil
+	}
 	fs.mu.RLock()
 	defer fs.mu.RUnlock()
 	rm, err := fs.router.match(path)
@@ -145,6 +159,22 @@ func (fs *FileSystem) Readdir(path string, caller CallerIdentity) ([]DirEntry, e
 	if path == "/sys" {
 		return []DirEntry{{Name: "metrics", Kind: KindBlob, Mode: 0o444}}, nil
 	}
+	if path == "/skills" {
+		entries := make([]DirEntry, 0)
+		for _, skill := range fs.skills.List() {
+			entries = append(entries, DirEntry{Name: skill.Name, Kind: KindDir, Mode: 0o555})
+		}
+		fs.mu.RLock()
+		routeEntries, routeErr := fs.router.list(path)
+		fs.mu.RUnlock()
+		if routeErr == nil {
+			entries = mergeDirEntries(entries, routeEntries)
+		}
+		return entries, nil
+	}
+	if name, ok := skillDirPath(path); ok && fs.skills.Exists(name) {
+		return []DirEntry{{Name: "SKILL.md", Kind: KindBlob, Mode: 0o444}}, nil
+	}
 	fs.mu.RLock()
 	defer fs.mu.RUnlock()
 	if path != "/" {
@@ -165,6 +195,8 @@ func (fs *FileSystem) Readdir(path string, caller CallerIdentity) ([]DirEntry, e
 	}
 	if path == "/" {
 		entries = append(entries, DirEntry{Name: "sys", Kind: KindDir, Mode: 0o555})
+		entries = append(entries, DirEntry{Name: "skills", Kind: KindDir, Mode: 0o555})
+		entries = mergeDirEntries(nil, entries)
 		sort.Slice(entries, func(i, j int) bool { return entries[i].Name < entries[j].Name })
 	}
 	return entries, nil
@@ -176,6 +208,14 @@ func (fs *FileSystem) Read(ctx context.Context, path string, caller CallerIdenti
 	defer func() { fs.metrics.record(OpRead, started, err) }()
 	if path == "/sys/metrics" {
 		return fs.metrics.Prometheus(), nil
+	}
+	if name, ok := skillFilePath(path); ok {
+		data, readErr := fs.skills.ReadSkillFile(name)
+		if readErr != nil {
+			err = readErr
+			return nil, readErr
+		}
+		return data, nil
 	}
 	fs.mu.RLock()
 	rm, err := fs.router.match(path)
@@ -318,4 +358,41 @@ func invokeProvider(ctx context.Context, provider Provider, cap *CapConfig, op O
 
 func hasProviderOps(ops map[OpCode]*CapConfig) bool {
 	return len(ops) > 0
+}
+
+func skillDirPath(path string) (string, bool) {
+	const prefix = "/skills/"
+	if !strings.HasPrefix(path, prefix) || strings.Contains(path[len(prefix):], "/") {
+		return "", false
+	}
+	name := path[len(prefix):]
+	return name, skillNameRE.MatchString(name)
+}
+
+func skillFilePath(path string) (string, bool) {
+	const prefix = "/skills/"
+	const suffix = "/SKILL.md"
+	if !strings.HasPrefix(path, prefix) || !strings.HasSuffix(path, suffix) {
+		return "", false
+	}
+	name := strings.TrimSuffix(path[len(prefix):], suffix)
+	return name, skillNameRE.MatchString(name)
+}
+
+func mergeDirEntries(a, b []DirEntry) []DirEntry {
+	seen := make(map[string]DirEntry, len(a)+len(b))
+	for _, entry := range a {
+		seen[entry.Name] = entry
+	}
+	for _, entry := range b {
+		if _, ok := seen[entry.Name]; !ok {
+			seen[entry.Name] = entry
+		}
+	}
+	out := make([]DirEntry, 0, len(seen))
+	for _, entry := range seen {
+		out = append(out, entry)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
 }
