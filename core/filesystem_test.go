@@ -203,6 +203,58 @@ func TestStatKinds(t *testing.T) {
 	}
 }
 
+func TestReaddirRootAndNestedMounts(t *testing.T) {
+	fs := NewFS(GlobalConfig{})
+	mounts := map[string]MountEntry{
+		"/papers":             {Kind: KindDir, Mode: 0o555},
+		"/papers/items/:id":   {Kind: KindBlob, Mode: 0o444},
+		"/skills":             {Kind: KindDir, Mode: 0o555},
+		"/skills/greet":       {Kind: KindAPI, Mode: 0o444},
+		"/z-last/static-file": {Kind: KindBlob, Mode: 0o444},
+	}
+	for path, entry := range mounts {
+		if err := fs.Mount(path, entry); err != nil {
+			t.Fatalf("mount %s: %v", path, err)
+		}
+	}
+	root, err := fs.Readdir("/", CallerIdentity{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantRoot := []DirEntry{
+		{Name: "papers", Kind: KindDir, Mode: 0o555},
+		{Name: "skills", Kind: KindDir, Mode: 0o555},
+		{Name: "z-last", Kind: KindDir, Mode: 0o555},
+	}
+	if !reflect.DeepEqual(root, wantRoot) {
+		t.Fatalf("root entries = %#v, want %#v", root, wantRoot)
+	}
+	papers, err := fs.Readdir("/papers/items", CallerIdentity{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantPapers := []DirEntry{{Name: ":id", Kind: KindBlob, Mode: 0o444}}
+	if !reflect.DeepEqual(papers, wantPapers) {
+		t.Fatalf("papers entries = %#v, want %#v", papers, wantPapers)
+	}
+}
+
+func TestReaddirErrors(t *testing.T) {
+	fs := NewFS(GlobalConfig{})
+	if err := fs.Mount("/blob", MountEntry{Kind: KindBlob}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fs.Readdir("/blob", CallerIdentity{}); !IsCode(err, ENOTDIR) {
+		t.Fatalf("expected ENOTDIR, got %v", err)
+	}
+	if _, err := fs.Readdir("/missing", CallerIdentity{}); !IsCode(err, ENOENT) {
+		t.Fatalf("expected ENOENT, got %v", err)
+	}
+	if _, err := fs.Readdir("/bad//path", CallerIdentity{}); !IsCode(err, EINVAL) {
+		t.Fatalf("expected EINVAL, got %v", err)
+	}
+}
+
 func TestLinkRead(t *testing.T) {
 	fs := NewFS(GlobalConfig{})
 	if err := fs.Mount("/link", MountEntry{Kind: KindLink, LinkPath: "/target"}); err != nil {
