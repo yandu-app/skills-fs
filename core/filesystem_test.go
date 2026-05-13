@@ -763,6 +763,62 @@ func TestSkillGenerateAndUnmountCleanup(t *testing.T) {
 	}
 }
 
+func TestGeneratedSkillsVirtualNamespace(t *testing.T) {
+	root := t.TempDir()
+	fs := NewFS(GlobalConfig{SkillsRoot: root})
+	if err := fs.Mount("/tools/greet", MountEntry{
+		Kind: KindAPI,
+		Mode: 0o444,
+		Skill: &SkillConfig{
+			Enabled:      true,
+			Name:         "greeting",
+			Description:  "Provides greeting text.",
+			BodyTemplate: "Read with cat.",
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := fs.Readdir("/skills", CallerIdentity{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantEntries := []DirEntry{{Name: "greeting", Kind: KindDir, Mode: 0o555}}
+	if !reflect.DeepEqual(entries, wantEntries) {
+		t.Fatalf("skills entries = %#v, want %#v", entries, wantEntries)
+	}
+	skillEntries, err := fs.Readdir("/skills/greeting", CallerIdentity{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(skillEntries, []DirEntry{{Name: "SKILL.md", Kind: KindBlob, Mode: 0o444}}) {
+		t.Fatalf("skill dir entries = %#v", skillEntries)
+	}
+	stat, err := fs.Stat("/skills/greeting/SKILL.md", CallerIdentity{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stat.Kind != KindBlob || stat.Size == 0 {
+		t.Fatalf("unexpected skill stat: %#v", stat)
+	}
+	data, err := fs.Read(context.Background(), "/skills/greeting/SKILL.md", CallerIdentity{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "name: greeting") {
+		t.Fatalf("unexpected skill file:\n%s", data)
+	}
+	if err := fs.Unmount("/tools/greet"); err != nil {
+		t.Fatal(err)
+	}
+	entries, err = fs.Readdir("/skills", CallerIdentity{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("skills should be empty after unmount: %#v", entries)
+	}
+}
+
 func TestSkillGenerateRichFrontmatterAndTemplate(t *testing.T) {
 	root := t.TempDir()
 	gen := NewSkillGenerator(root)
