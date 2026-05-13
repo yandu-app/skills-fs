@@ -9,6 +9,8 @@ type FileSystem struct {
 	cfg       GlobalConfig
 	router    *router
 	providers map[string]Provider
+	handles   *handleManager
+	locks     *lockManager
 	skills    *SkillGenerator
 	mu        sync.RWMutex
 }
@@ -19,6 +21,8 @@ func NewFS(cfg GlobalConfig) *FileSystem {
 		cfg:       cfg,
 		router:    newRouter(),
 		providers: make(map[string]Provider),
+		handles:   newHandleManager(cfg.MaxOpenHandles),
+		locks:     newLockManager(),
 		skills:    NewSkillGenerator(cfg.SkillsRoot),
 	}
 }
@@ -87,8 +91,11 @@ func (fs *FileSystem) Unmount(path string) error {
 		return err
 	}
 	if m.Skill != nil && m.Skill.Enabled {
-		return fs.skills.Remove(m.Skill.Name)
+		if err := fs.skills.Remove(m.Skill.Name); err != nil {
+			return err
+		}
 	}
+	fs.locks.purge(path)
 	return nil
 }
 
