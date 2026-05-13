@@ -16,6 +16,7 @@ import (
 type fakeProvider struct {
 	id       string
 	err      error
+	mu       sync.Mutex
 	calls    []providerCall
 	response []byte
 }
@@ -70,6 +71,8 @@ func (p *fakeProvider) ID() string {
 }
 
 func (p *fakeProvider) Invoke(_ context.Context, action string, params map[string]interface{}) (*ProviderResult, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	p.calls = append(p.calls, providerCall{action: action, params: params})
 	if p.err != nil {
 		return nil, p.err
@@ -236,6 +239,137 @@ func TestBlobWriteAndStat(t *testing.T) {
 	}
 	if string(got) != "new-data" {
 		t.Fatalf("unexpected blob data %q", got)
+	}
+}
+
+func TestOpenHandleReadWriteAndClose(t *testing.T) {
+	fs := NewFS(GlobalConfig{})
+	if err := fs.Mount("/blob", MountEntry{Kind: KindBlob, Mode: 0o666, BlobData: []byte("old")}); err != nil {
+		t.Fatal(err)
+	}
+	h, err := fs.Open("/blob", OpenRead|OpenWrite, CallerIdentity{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := h.ReadAll(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "old" {
+		t.Fatalf("read = %q", got)
+	}
+	if err := h.Write(context.Background(), []byte("new")); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.ReadAll(context.Background()); !IsCode(err, EBUSY) {
+		t.Fatalf("closed handle read should fail with EBUSY, got %v", err)
+	}
+}
+
+func TestMaxOpenHandles(t *testing.T) {
+	fs := NewFS(GlobalConfig{MaxOpenHandles: 1})
+	if err := fs.Mount("/blob", MountEntry{Kind: KindBlob, Mode: 0o666}); err != nil {
+		t.Fatal(err)
+	}
+	h, err := fs.Open("/blob", OpenRead, CallerIdentity{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fs.Open("/blob", OpenRead, CallerIdentity{}); !IsCode(err, EBUSY) {
+		t.Fatalf("expected EBUSY, got %v", err)
+	}
+	if err := h.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if h2, err := fs.Open("/blob", OpenRead, CallerIdentity{}); err != nil {
+		t.Fatalf("open after close should pass: %v", err)
+	} else if err := h2.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestBufferedHandleFlushOnNewlineAndClose(t *testing.T) {
+	provider := &fakeProvider{id: "p"}
+	fs := NewFS(GlobalConfig{})
+	if err := fs.RegisterProvider(provider); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Mount("/commands/:name", MountEntry{
+		Kind: KindAPI,
+		Mode: 0o222,
+		BufferPolicy: &WriteBufferPolicy{
+			Mode:           WriteBuffered,
+			FlushOnNewline: true,
+		},
+		Ops: map[OpCode]*CapConfig{OpWrite: {
+			ProviderID: "p",
+			Action:     "command.run",
+			ParamsFn: func(pathParams map[string]string, payload []byte, _ OpContext) (map[string]interface{}, error) {
+				return map[string]interface{}{"name": pathParams["name"], "payload": string(payload)}, nil
+			},
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	h, err := fs.Open("/commands/build", OpenWrite, CallerIdentity{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.Write(context.Background(), []byte("one")); err != nil {
+		t.Fatal(err)
+	}
+	if len(provider.calls) != 0 {
+		t.Fatalf("buffer flushed too early: %#v", provider.calls)
+	}
+	if err := h.Write(context.Background(), []byte("\ntwo")); err != nil {
+		t.Fatal(err)
+	}
+	if len(provider.calls) != 1 || provider.calls[0].params["payload"] != "one\n" {
+		t.Fatalf("newline flush mismatch: %#v", provider.calls)
+	}
+	if err := h.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(provider.calls) != 2 || provider.calls[1].params["payload"] != "two" {
+		t.Fatalf("close flush mismatch: %#v", provider.calls)
+	}
+}
+
+func TestBufferedHandleFlushOnMaxSize(t *testing.T) {
+	provider := &fakeProvider{id: "p"}
+	fs := NewFS(GlobalConfig{})
+	if err := fs.RegisterProvider(provider); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Mount("/commands/run", MountEntry{
+		Kind:         KindAPI,
+		Mode:         0o222,
+		BufferPolicy: &WriteBufferPolicy{Mode: WriteBuffered, MaxSize: 4},
+		Ops: map[OpCode]*CapConfig{OpWrite: {
+			ProviderID: "p",
+			Action:     "run",
+			ParamsFn: func(_ map[string]string, payload []byte, _ OpContext) (map[string]interface{}, error) {
+				return map[string]interface{}{"payload": string(payload)}, nil
+			},
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	h, err := fs.Open("/commands/run", OpenWrite, CallerIdentity{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.Write(context.Background(), []byte("abcd")); err != nil {
+		t.Fatal(err)
+	}
+	if len(provider.calls) != 1 || provider.calls[0].params["payload"] != "abcd" {
+		t.Fatalf("max flush mismatch: %#v", provider.calls)
+	}
+	if err := h.Close(context.Background()); err != nil {
+		t.Fatal(err)
 	}
 }
 

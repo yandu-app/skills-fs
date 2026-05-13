@@ -49,16 +49,17 @@ func (c GlobalConfig) withDefaults() GlobalConfig {
 }
 
 type MountEntry struct {
-	ID         uint64
-	Path       string
-	Kind       NodeKind
-	Mode       uint32
-	UID        uint32
-	GID        uint32
-	Ops        map[OpCode]*CapConfig
-	Serial     bool
-	Skill      *SkillConfig
-	Visibility string
+	ID           uint64
+	Path         string
+	Kind         NodeKind
+	Mode         uint32
+	UID          uint32
+	GID          uint32
+	Ops          map[OpCode]*CapConfig
+	Serial       bool
+	BufferPolicy *WriteBufferPolicy
+	Skill        *SkillConfig
+	Visibility   string
 
 	BlobData []byte
 	LinkPath string
