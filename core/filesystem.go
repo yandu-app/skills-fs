@@ -188,21 +188,31 @@ func (fs *FileSystem) Resolve(path string) (MountEntry, map[string]string, error
 	if err != nil {
 		return MountEntry{}, nil, err
 	}
+	return *rm.mount, rm.params.ToMap(), nil
+}
+
+func (fs *FileSystem) ResolveParams(path string) (MountEntry, ParamSet, error) {
+	fs.mu.RLock()
+	defer fs.mu.RUnlock()
+	rm, err := fs.router.match(path)
+	if err != nil {
+		return MountEntry{}, ParamSet{}, err
+	}
 	return *rm.mount, rm.params, nil
 }
 
-func (fs *FileSystem) invoke(ctx context.Context, m *MountEntry, op OpCode, path string, pathParams map[string]string, payload []byte, caller CallerIdentity) ([]byte, error) {
+func (fs *FileSystem) invoke(ctx context.Context, m *MountEntry, op OpCode, path string, pathParams ParamSet, payload []byte, caller CallerIdentity) ([]byte, error) {
 	cap := m.Ops[op]
 	if cap == nil {
 		return nil, posix(ENOSYS, op, path, nil)
 	}
 	params := map[string]interface{}{}
-	for k, v := range pathParams {
+	pathParams.Each(func(k, v string) {
 		params[k] = v
-	}
+	})
 	var err error
 	if cap.ParamsFn != nil {
-		params, err = cap.ParamsFn(pathParams, payload, OpContext{Path: path, Op: op, Caller: caller})
+		params, err = cap.ParamsFn(pathParams.ToMap(), payload, OpContext{Path: path, Op: op, Caller: caller})
 		if err != nil {
 			return nil, posix(EINVAL, op, path, err)
 		}

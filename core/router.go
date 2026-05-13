@@ -15,7 +15,7 @@ type routeNode struct {
 
 type routeMatch struct {
 	mount  *MountEntry
-	params map[string]string
+	params ParamSet
 }
 
 type router struct {
@@ -32,9 +32,14 @@ func (r *router) add(m MountEntry) (*MountEntry, error) {
 	if err != nil {
 		return nil, err
 	}
+	paramCount := 0
 	n := &r.root
 	for _, p := range parts {
 		if strings.HasPrefix(p, ":") {
+			paramCount++
+			if paramCount > inlineParams {
+				return nil, posix(EINVAL, OpStat, m.Path, nil)
+			}
 			key := p[1:]
 			if key == "" {
 				return nil, posix(EINVAL, OpStat, m.Path, nil)
@@ -175,7 +180,7 @@ func (r *router) match(path string) (routeMatch, error) {
 		return routeMatch{}, posix(EINVAL, OpStat, path, nil)
 	}
 	n := &r.root
-	var params map[string]string
+	var params ParamSet
 	if path != "/" {
 		start := 1
 		for start <= len(path) {
@@ -195,10 +200,7 @@ func (r *router) match(path string) (routeMatch, error) {
 				return routeMatch{}, posix(ENOENT, OpStat, path, nil)
 			}
 			if key != "" {
-				if params == nil {
-					params = make(map[string]string)
-				}
-				params[key] = p
+				params.set(key, p)
 			}
 			n = next
 			if end == len(path) {

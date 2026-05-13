@@ -14,7 +14,7 @@ func BenchmarkPathResolveStatic(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if _, _, err := fs.Resolve("/papers/items/latest/fulltext"); err != nil {
+		if _, _, err := fs.ResolveParams("/papers/items/latest/fulltext"); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -28,7 +28,7 @@ func BenchmarkPathResolveParam(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if _, _, err := fs.Resolve("/papers/items/p123/attachments/a456"); err != nil {
+		if _, _, err := fs.ResolveParams("/papers/items/p123/attachments/a456"); err != nil {
 			b.Fatal(err)
 		}
 	}

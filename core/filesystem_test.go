@@ -64,6 +64,13 @@ func TestResolveExtractsPathParams(t *testing.T) {
 	if !reflect.DeepEqual(params, want) {
 		t.Fatalf("params mismatch: got %#v want %#v", params, want)
 	}
+	_, set, err := fs.ResolveParams("/papers/items/p1/attachments/a9")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := set.Get("itemId"); !ok || got != "p1" {
+		t.Fatalf("ResolveParams itemId = %q, %v", got, ok)
+	}
 }
 
 func TestDuplicateMountRejected(t *testing.T) {
@@ -74,6 +81,14 @@ func TestDuplicateMountRejected(t *testing.T) {
 	err := fs.Mount("/a/b", MountEntry{Kind: KindBlob})
 	if !IsCode(err, EEXIST) {
 		t.Fatalf("expected EEXIST, got %v", err)
+	}
+}
+
+func TestTooManyPathParamsRejected(t *testing.T) {
+	fs := NewFS(GlobalConfig{})
+	path := "/:a/:b/:c/:d/:e/:f/:g/:h/:i"
+	if err := fs.Mount(path, MountEntry{Kind: KindBlob}); !IsCode(err, EINVAL) {
+		t.Fatalf("expected EINVAL, got %v", err)
 	}
 }
 
