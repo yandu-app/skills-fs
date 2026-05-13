@@ -115,6 +115,24 @@ func (fs *FileSystem) Stat(path string, caller CallerIdentity) (Stat, error) {
 	return Stat{Path: path, Kind: m.Kind, Mode: m.Mode, UID: m.UID, GID: m.GID, Size: size}, nil
 }
 
+func (fs *FileSystem) Readdir(path string, caller CallerIdentity) ([]DirEntry, error) {
+	fs.mu.RLock()
+	defer fs.mu.RUnlock()
+	if path != "/" {
+		rm, err := fs.router.match(path)
+		if err == nil {
+			m := rm.mount
+			if !canAccess(caller, m.UID, m.GID, m.Mode, OpReaddir) {
+				return nil, posix(EACCES, OpReaddir, path, nil)
+			}
+			if m.Kind != KindDir {
+				return nil, posix(ENOTDIR, OpReaddir, path, nil)
+			}
+		}
+	}
+	return fs.router.list(path)
+}
+
 func (fs *FileSystem) Read(ctx context.Context, path string, caller CallerIdentity) ([]byte, error) {
 	fs.mu.RLock()
 	defer fs.mu.RUnlock()

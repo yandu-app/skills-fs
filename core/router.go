@@ -1,6 +1,7 @@
 package core
 
 import (
+	"sort"
 	"strings"
 	"sync/atomic"
 )
@@ -89,6 +90,81 @@ func (r *router) remove(path string) (*MountEntry, error) {
 	m := n.mount
 	n.mount = nil
 	return m, nil
+}
+
+func (r *router) list(path string) ([]DirEntry, error) {
+	n, err := r.node(path)
+	if err != nil {
+		return nil, err
+	}
+	if n.mount != nil && n.mount.Kind != KindDir {
+		return nil, posix(ENOTDIR, OpReaddir, path, nil)
+	}
+	entries := make([]DirEntry, 0, len(n.static)+1)
+	names := make([]string, 0, len(n.static))
+	for name := range n.static {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		child := n.static[name]
+		entries = append(entries, DirEntry{Name: name, Kind: nodeKind(child), Mode: nodeMode(child)})
+	}
+	if n.param != nil {
+		entries = append(entries, DirEntry{Name: ":" + n.paramKey, Kind: nodeKind(n.param), Mode: nodeMode(n.param)})
+	}
+	return entries, nil
+}
+
+func (r *router) node(path string) (*routeNode, error) {
+	if path == "" || path[0] != '/' {
+		return nil, posix(EINVAL, OpStat, path, nil)
+	}
+	if strings.Contains(path, "//") {
+		return nil, posix(EINVAL, OpStat, path, nil)
+	}
+	n := &r.root
+	if path == "/" {
+		return n, nil
+	}
+	start := 1
+	for start <= len(path) {
+		end := start
+		for end < len(path) && path[end] != '/' {
+			end++
+		}
+		if end == start {
+			return nil, posix(EINVAL, OpStat, path, nil)
+		}
+		p := path[start:end]
+		if p == "." || p == ".." {
+			return nil, posix(EINVAL, OpStat, path, nil)
+		}
+		next, _, ok := nextRoute(n, p)
+		if !ok {
+			return nil, posix(ENOENT, OpStat, path, nil)
+		}
+		n = next
+		if end == len(path) {
+			break
+		}
+		start = end + 1
+	}
+	return n, nil
+}
+
+func nodeKind(n *routeNode) NodeKind {
+	if n.mount != nil {
+		return n.mount.Kind
+	}
+	return KindDir
+}
+
+func nodeMode(n *routeNode) uint32 {
+	if n.mount != nil {
+		return n.mount.Mode
+	}
+	return 0o555
 }
 
 func (r *router) match(path string) (routeMatch, error) {

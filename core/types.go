@@ -113,3 +113,9 @@ type Stat struct {
 	GID  uint32
 	Size int64
 }
+
+type DirEntry struct {
+	Name string
+	Kind NodeKind
+	Mode uint32
+}
