@@ -7,7 +7,10 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 type fakeProvider struct {
@@ -15,6 +18,46 @@ type fakeProvider struct {
 	err      error
 	calls    []providerCall
 	response []byte
+}
+
+type blockingProvider struct {
+	id       string
+	started  chan string
+	release  chan struct{}
+	mu       sync.Mutex
+	order    []string
+	active   atomic.Int32
+	maxAlive atomic.Int32
+}
+
+func newBlockingProvider(id string) *blockingProvider {
+	return &blockingProvider{
+		id:      id,
+		started: make(chan string, 16),
+		release: make(chan struct{}),
+	}
+}
+
+func (p *blockingProvider) ID() string {
+	return p.id
+}
+
+func (p *blockingProvider) Invoke(_ context.Context, action string, params map[string]interface{}) (*ProviderResult, error) {
+	alive := p.active.Add(1)
+	for {
+		old := p.maxAlive.Load()
+		if alive <= old || p.maxAlive.CompareAndSwap(old, alive) {
+			break
+		}
+	}
+	name, _ := params["name"].(string)
+	p.started <- name
+	<-p.release
+	p.mu.Lock()
+	p.order = append(p.order, name)
+	p.mu.Unlock()
+	p.active.Add(-1)
+	return &ProviderResult{}, nil
 }
 
 type providerCall struct {
@@ -377,6 +420,84 @@ func TestAPIWriteUsesParamsFnPayload(t *testing.T) {
 	got := provider.calls[0].params
 	if got["name"] != "build" || got["payload"] != `{"force":true}` {
 		t.Fatalf("unexpected params: %#v", got)
+	}
+}
+
+func TestSerialAPIWriteRunsOneAtATime(t *testing.T) {
+	provider := newBlockingProvider("p")
+	fs := NewFS(GlobalConfig{})
+	if err := fs.RegisterProvider(provider); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Mount("/commands/:name", MountEntry{
+		Kind:   KindAPI,
+		Mode:   0o222,
+		Serial: true,
+		Ops: map[OpCode]*CapConfig{OpWrite: {
+			ProviderID: "p",
+			Action:     "command.run",
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	errs := make(chan error, 2)
+	go func() { errs <- fs.Write(context.Background(), "/commands/first", []byte("x"), CallerIdentity{}) }()
+	if got := <-provider.started; got != "first" {
+		t.Fatalf("first started = %q", got)
+	}
+	go func() { errs <- fs.Write(context.Background(), "/commands/second", []byte("x"), CallerIdentity{}) }()
+	select {
+	case got := <-provider.started:
+		t.Fatalf("serial write started concurrently: %s", got)
+	case <-time.After(20 * time.Millisecond):
+	}
+	provider.release <- struct{}{}
+	if err := <-errs; err != nil {
+		t.Fatal(err)
+	}
+	if got := <-provider.started; got != "second" {
+		t.Fatalf("second started = %q", got)
+	}
+	provider.release <- struct{}{}
+	if err := <-errs; err != nil {
+		t.Fatal(err)
+	}
+	if provider.maxAlive.Load() != 1 {
+		t.Fatalf("serial provider max concurrency = %d", provider.maxAlive.Load())
+	}
+}
+
+func TestNonSerialAPIWriteMayOverlap(t *testing.T) {
+	provider := newBlockingProvider("p")
+	fs := NewFS(GlobalConfig{})
+	if err := fs.RegisterProvider(provider); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Mount("/commands/:name", MountEntry{
+		Kind: KindAPI,
+		Mode: 0o222,
+		Ops: map[OpCode]*CapConfig{OpWrite: {
+			ProviderID: "p",
+			Action:     "command.run",
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	errs := make(chan error, 2)
+	go func() { errs <- fs.Write(context.Background(), "/commands/first", []byte("x"), CallerIdentity{}) }()
+	go func() { errs <- fs.Write(context.Background(), "/commands/second", []byte("x"), CallerIdentity{}) }()
+	<-provider.started
+	<-provider.started
+	provider.release <- struct{}{}
+	provider.release <- struct{}{}
+	if err := <-errs; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-errs; err != nil {
+		t.Fatal(err)
+	}
+	if provider.maxAlive.Load() < 2 {
+		t.Fatalf("non-serial writes did not overlap")
 	}
 }
 
