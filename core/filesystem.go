@@ -2,7 +2,9 @@ package core
 
 import (
 	"context"
+	"sort"
 	"sync"
+	"time"
 )
 
 type FileSystem struct {
@@ -11,6 +13,7 @@ type FileSystem struct {
 	providers map[string]Provider
 	handles   *handleManager
 	locks     *lockManager
+	metrics   *Metrics
 	skills    *SkillGenerator
 	mu        sync.RWMutex
 }
@@ -23,6 +26,7 @@ func NewFS(cfg GlobalConfig) *FileSystem {
 		providers: make(map[string]Provider),
 		handles:   newHandleManager(cfg.MaxOpenHandles),
 		locks:     newLockManager(),
+		metrics:   newMetrics(),
 		skills:    NewSkillGenerator(cfg.SkillsRoot),
 	}
 }
@@ -100,6 +104,15 @@ func (fs *FileSystem) Unmount(path string) error {
 }
 
 func (fs *FileSystem) Stat(path string, caller CallerIdentity) (Stat, error) {
+	started := time.Now()
+	var err error
+	defer func() { fs.metrics.record(OpStat, started, err) }()
+	if path == "/sys" {
+		return Stat{Path: path, Kind: KindDir, Mode: 0o555, UID: fs.cfg.DefaultUID, GID: fs.cfg.DefaultGID}, nil
+	}
+	if path == "/sys/metrics" {
+		return Stat{Path: path, Kind: KindBlob, Mode: 0o444, UID: fs.cfg.DefaultUID, GID: fs.cfg.DefaultGID, Size: int64(len(fs.metrics.Prometheus()))}, nil
+	}
 	fs.mu.RLock()
 	defer fs.mu.RUnlock()
 	rm, err := fs.router.match(path)
@@ -126,6 +139,12 @@ func (fs *FileSystem) Stat(path string, caller CallerIdentity) (Stat, error) {
 }
 
 func (fs *FileSystem) Readdir(path string, caller CallerIdentity) ([]DirEntry, error) {
+	started := time.Now()
+	var err error
+	defer func() { fs.metrics.record(OpReaddir, started, err) }()
+	if path == "/sys" {
+		return []DirEntry{{Name: "metrics", Kind: KindBlob, Mode: 0o444}}, nil
+	}
 	fs.mu.RLock()
 	defer fs.mu.RUnlock()
 	if path != "/" {
@@ -140,10 +159,24 @@ func (fs *FileSystem) Readdir(path string, caller CallerIdentity) ([]DirEntry, e
 			}
 		}
 	}
-	return fs.router.list(path)
+	entries, err := fs.router.list(path)
+	if err != nil {
+		return nil, err
+	}
+	if path == "/" {
+		entries = append(entries, DirEntry{Name: "sys", Kind: KindDir, Mode: 0o555})
+		sort.Slice(entries, func(i, j int) bool { return entries[i].Name < entries[j].Name })
+	}
+	return entries, nil
 }
 
 func (fs *FileSystem) Read(ctx context.Context, path string, caller CallerIdentity) ([]byte, error) {
+	started := time.Now()
+	var err error
+	defer func() { fs.metrics.record(OpRead, started, err) }()
+	if path == "/sys/metrics" {
+		return fs.metrics.Prometheus(), nil
+	}
 	fs.mu.RLock()
 	rm, err := fs.router.match(path)
 	if err != nil {
@@ -182,6 +215,9 @@ func (fs *FileSystem) Read(ctx context.Context, path string, caller CallerIdenti
 }
 
 func (fs *FileSystem) Write(ctx context.Context, path string, payload []byte, caller CallerIdentity) error {
+	started := time.Now()
+	var err error
+	defer func() { fs.metrics.record(OpWrite, started, err) }()
 	fs.mu.RLock()
 	rm, err := fs.router.match(path)
 	if err != nil {

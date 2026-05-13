@@ -416,6 +416,7 @@ func TestReaddirRootAndNestedMounts(t *testing.T) {
 	wantRoot := []DirEntry{
 		{Name: "papers", Kind: KindDir, Mode: 0o555},
 		{Name: "skills", Kind: KindDir, Mode: 0o555},
+		{Name: "sys", Kind: KindDir, Mode: 0o555},
 		{Name: "z-last", Kind: KindDir, Mode: 0o555},
 	}
 	if !reflect.DeepEqual(root, wantRoot) {
@@ -444,6 +445,45 @@ func TestReaddirErrors(t *testing.T) {
 	}
 	if _, err := fs.Readdir("/bad//path", CallerIdentity{}); !IsCode(err, EINVAL) {
 		t.Fatalf("expected EINVAL, got %v", err)
+	}
+}
+
+func TestSysMetricsVirtualFiles(t *testing.T) {
+	fs := NewFS(GlobalConfig{})
+	if err := fs.Mount("/blob", MountEntry{Kind: KindBlob, Mode: 0o444, BlobData: []byte("x")}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fs.Read(context.Background(), "/blob", CallerIdentity{}); err != nil {
+		t.Fatal(err)
+	}
+	stat, err := fs.Stat("/sys/metrics", CallerIdentity{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stat.Kind != KindBlob || stat.Mode != 0o444 || stat.Size == 0 {
+		t.Fatalf("unexpected metrics stat: %#v", stat)
+	}
+	entries, err := fs.Readdir("/sys", CallerIdentity{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []DirEntry{{Name: "metrics", Kind: KindBlob, Mode: 0o444}}
+	if !reflect.DeepEqual(entries, want) {
+		t.Fatalf("sys entries = %#v, want %#v", entries, want)
+	}
+	data, err := fs.Read(context.Background(), "/sys/metrics", CallerIdentity{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, want := range []string{
+		"skills_fs_operations_total{op=\"read\"}",
+		"skills_fs_operation_errors_total{op=\"read\"}",
+		"skills_fs_operation_latency_seconds{op=\"read\"}",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("metrics missing %q in:\n%s", want, text)
+		}
 	}
 }
 
