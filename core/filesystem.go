@@ -55,6 +55,9 @@ func (fs *FileSystem) Mount(path string, entry MountEntry) error {
 	if entry.GID == 0 {
 		entry.GID = fs.cfg.DefaultGID
 	}
+	if entry.Serial {
+		entry.serial = &serialQueue{}
+	}
 	for _, op := range entry.Ops {
 		if op == nil {
 			return posix(EINVAL, OpStat, path, nil)
@@ -135,48 +138,83 @@ func (fs *FileSystem) Readdir(path string, caller CallerIdentity) ([]DirEntry, e
 
 func (fs *FileSystem) Read(ctx context.Context, path string, caller CallerIdentity) ([]byte, error) {
 	fs.mu.RLock()
-	defer fs.mu.RUnlock()
 	rm, err := fs.router.match(path)
 	if err != nil {
+		fs.mu.RUnlock()
 		return nil, err
 	}
 	m := rm.mount
 	if !canAccess(caller, m.UID, m.GID, m.Mode, OpRead) {
+		fs.mu.RUnlock()
 		return nil, posix(EACCES, OpRead, path, nil)
 	}
 	switch m.Kind {
 	case KindBlob:
-		return append([]byte(nil), m.BlobData...), nil
+		data := append([]byte(nil), m.BlobData...)
+		fs.mu.RUnlock()
+		return data, nil
 	case KindAPI:
-		return fs.invoke(ctx, m, OpRead, path, rm.params, nil, caller)
+		cap, provider, err := fs.providerFor(m, OpRead, path)
+		params := rm.params
+		fs.mu.RUnlock()
+		if err != nil {
+			return nil, err
+		}
+		return invokeProvider(ctx, provider, cap, OpRead, path, params, nil, caller)
 	case KindLink:
-		return []byte(m.LinkPath), nil
+		target := []byte(m.LinkPath)
+		fs.mu.RUnlock()
+		return target, nil
 	case KindDir:
+		fs.mu.RUnlock()
 		return nil, posix(EISDIR, OpRead, path, nil)
 	default:
+		fs.mu.RUnlock()
 		return nil, posix(ENOSYS, OpRead, path, nil)
 	}
 }
 
 func (fs *FileSystem) Write(ctx context.Context, path string, payload []byte, caller CallerIdentity) error {
-	fs.mu.Lock()
-	defer fs.mu.Unlock()
+	fs.mu.RLock()
 	rm, err := fs.router.match(path)
 	if err != nil {
+		fs.mu.RUnlock()
 		return err
 	}
 	m := rm.mount
 	if !canAccess(caller, m.UID, m.GID, m.Mode, OpWrite) {
+		fs.mu.RUnlock()
 		return posix(EACCES, OpWrite, path, nil)
 	}
 	switch m.Kind {
 	case KindBlob:
+		fs.mu.RUnlock()
+		fs.mu.Lock()
+		defer fs.mu.Unlock()
+		rm, err := fs.router.match(path)
+		if err != nil {
+			return err
+		}
+		m = rm.mount
+		if !canAccess(caller, m.UID, m.GID, m.Mode, OpWrite) {
+			return posix(EACCES, OpWrite, path, nil)
+		}
 		m.BlobData = append(m.BlobData[:0], payload...)
 		return nil
 	case KindAPI:
-		_, err := fs.invoke(ctx, m, OpWrite, path, rm.params, payload, caller)
-		return err
+		cap, provider, err := fs.providerFor(m, OpWrite, path)
+		params := rm.params
+		serial := m.serial
+		fs.mu.RUnlock()
+		if err != nil {
+			return err
+		}
+		return serial.run(func() error {
+			_, err := invokeProvider(ctx, provider, cap, OpWrite, path, params, payload, caller)
+			return err
+		})
 	default:
+		fs.mu.RUnlock()
 		return posix(ENOSYS, OpWrite, path, nil)
 	}
 }
@@ -201,11 +239,19 @@ func (fs *FileSystem) ResolveParams(path string) (MountEntry, ParamSet, error) {
 	return *rm.mount, rm.params, nil
 }
 
-func (fs *FileSystem) invoke(ctx context.Context, m *MountEntry, op OpCode, path string, pathParams ParamSet, payload []byte, caller CallerIdentity) ([]byte, error) {
+func (fs *FileSystem) providerFor(m *MountEntry, op OpCode, path string) (*CapConfig, Provider, error) {
 	cap := m.Ops[op]
 	if cap == nil {
-		return nil, posix(ENOSYS, op, path, nil)
+		return nil, nil, posix(ENOSYS, op, path, nil)
 	}
+	provider := fs.providers[cap.ProviderID]
+	if provider == nil {
+		return nil, nil, posix(ECOMM, op, path, nil)
+	}
+	return cap, provider, nil
+}
+
+func invokeProvider(ctx context.Context, provider Provider, cap *CapConfig, op OpCode, path string, pathParams ParamSet, payload []byte, caller CallerIdentity) ([]byte, error) {
 	params := map[string]interface{}{}
 	pathParams.Each(func(k, v string) {
 		params[k] = v
@@ -217,7 +263,6 @@ func (fs *FileSystem) invoke(ctx context.Context, m *MountEntry, op OpCode, path
 			return nil, posix(EINVAL, op, path, err)
 		}
 	}
-	provider := fs.providers[cap.ProviderID]
 	result, err := provider.Invoke(ctx, cap.Action, params)
 	if err != nil {
 		return nil, MapProviderError(err, op, path)

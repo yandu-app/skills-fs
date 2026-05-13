@@ -62,6 +62,7 @@ type MountEntry struct {
 
 	BlobData []byte
 	LinkPath string
+	serial   *serialQueue
 }
 
 type CapConfig struct {
