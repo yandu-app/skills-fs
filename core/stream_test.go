@@ -227,6 +227,36 @@ func TestStreamUnmountClosesBuffer(t *testing.T) {
 	}
 }
 
+func TestStreamReadClosedWhileBlocking(t *testing.T) {
+	fs := NewFS(GlobalConfig{})
+	if err := fs.Mount("/events", MountEntry{Kind: KindStream, Mode: 0o666}); err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan []byte, 1)
+	go func() {
+		// This blocks because the buffer is empty.
+		data, _ := fs.Read(context.Background(), "/events", CallerIdentity{})
+		done <- data
+	}()
+
+	// Give the goroutine time to block on read.
+	time.Sleep(20 * time.Millisecond)
+
+	if err := fs.Unmount("/events"); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case data := <-done:
+		if len(data) != 0 {
+			t.Fatalf("expected EOF (empty data), got %q", string(data))
+		}
+	case <-time.After(time.Second):
+		t.Fatal("blocked reader did not wake after unmount/close")
+	}
+}
+
 func TestStreamMultipleHandlesShareBuffer(t *testing.T) {
 	fs := NewFS(GlobalConfig{})
 	if err := fs.Mount("/events", MountEntry{Kind: KindStream, Mode: 0o666}); err != nil {
