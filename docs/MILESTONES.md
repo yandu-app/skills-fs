@@ -12,30 +12,36 @@ Status: complete.
 ## M1 Core Semantics
 
 - Mount, unmount, stat, read, write, readdir.
-- Blob, API, dir, and link semantics in core.
+- Blob, API, dir, link, and stream semantics in core.
 - Provider dispatch with path params.
-- Skill generation.
+- Skill generation with virtual `/skills` namespace projection.
 
-Status: mostly complete in pure Go core. Remaining adapter-facing work: full stream behavior, richer dir mutation, and generated `/skills` namespace projection.
+Status: complete.
 
 ## M2 Concurrency and Handles
 
-- Handle manager.
-- Advisory flock.
+- Handle manager with sharded maps and MaxOpenHandles budget.
+- Advisory flock (shared/exclusive) with timeout and ctx cancellation.
 - Serial API write queue.
-- Immediate and buffered write policies.
+- Immediate and buffered write policies (size, delay, newline triggers).
+- Stream pull/push with ring buffer and configurable backpressure (block, drop, error).
 
-Status: initial core implementation complete with race tests. Remaining work: benchmark lock contention and refine timed deadlock detection.
+Status: complete.
 
 ## M3 Adapters
 
-- Linux/macOS FUSE adapter.
-- File event notification.
-- WebDAV fallback.
-- Windows WinFsp adapter.
+- Linux FUSE adapter using `github.com/hanwen/go-fuse/v2` with dynamic Lookup, Getattr, Readdir, Open, Read, Write, Flush, Release.
+- FUSE inotify forwarding via kernel cache invalidation (NotifyContent / NotifyEntry).
+- Build-tagged stub for non-Linux platforms.
+- fs.Notify event API (Create, Write, Remove) with multi-listener support.
+- WebDAV fallback (stub).
+
+Status: FUSE and event API complete. WebDAV stub pending M4+ prioritization.
 
 ## M4 Host Bindings
 
 - Node N-API binding.
 - IPC provider bridge.
 - Lifecycle cleanup hooks.
+
+Status: not started.

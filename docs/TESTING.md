@@ -10,6 +10,11 @@ Core tests must cover:
 - Read/write permission checks.
 - Provider error string to POSIX error mapping.
 - Skill generation and cleanup.
+- Handle manager budget enforcement and sharded lookups.
+- Advisory flock shared/exclusive transitions and close release.
+- Buffered write flush on size, delay, and newline.
+- Stream read/write with block, drop, and error backpressure.
+- Event bus emit and multi-listener delivery.
 
 Run:
 
@@ -19,7 +24,9 @@ make coverage
 make race
 ```
 
-`make coverage` fails if total repository statement coverage drops below 85%.
+`make coverage` measures `core` and `bench` packages (excluding adapter code that requires platform drivers) and fails if statement coverage drops below 85%.
+
+`make coverage-all` measures the entire repository including adapters.
 
 ## Benchmarks
 
@@ -29,7 +36,9 @@ Benchmarks are tracked in `bench/`:
 - `BenchmarkPathResolveParam`: target `< 200 ns/op`.
 - `BenchmarkStatCacheHit`: target `< 200 ns/op`.
 - `BenchmarkWriteImmediate`: target `< 500 ns/op`, excluding provider work.
-- Additional placeholder benchmarks document future FUSE, lock, stream, and skill gates.
+- `BenchmarkSerialQueue`: throughput under parallel API writes.
+- `BenchmarkLockAcquire`: uncontended lock latency.
+- `BenchmarkLockContention1000`: shared lock scaling with 1000 handles.
 
 Run:
 
@@ -37,7 +46,7 @@ Run:
 make bench
 ```
 
-Current M0 baseline on Linux amd64:
+Current baseline on Linux amd64:
 
 - `BenchmarkPathResolveStatic`: about `56 ns/op`, `0 allocs/op`.
 - `BenchmarkPathResolveParam`: about `169 ns/op`.
@@ -48,3 +57,9 @@ Current M0 baseline on Linux amd64:
 ## Integration Tests
 
 FUSE tests must be opt-in and platform tagged because they require system drivers and mount privileges. They must verify real `ls`, `cat`, `grep`, `find`, and native watch events.
+
+To run FUSE integration tests on Linux:
+
+```sh
+go test -tags fuse_integration ./adapter/fuse
+```
