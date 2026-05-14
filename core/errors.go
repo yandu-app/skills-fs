@@ -21,6 +21,8 @@ const (
 	ENOSYS    Errno = "ENOSYS"
 	ENOTDIR   Errno = "ENOTDIR"
 	EISDIR    Errno = "EISDIR"
+	EAGAIN    Errno = "EAGAIN"
+	ENOSPC    Errno = "ENOSPC"
 )
 
 type PosixError struct {

@@ -235,6 +235,15 @@ func (h *Handle) ReadAll(ctx context.Context) ([]byte, error) {
 	if !h.flags.Has(OpenRead) {
 		return nil, posix(EACCES, OpRead, h.path, nil)
 	}
+	if h.mount.Kind == KindStream {
+		b := h.fs.streams.getOrCreate(h.path, h.mount.Stream)
+		buf := make([]byte, streamReadChunk)
+		n, err := b.read(buf, h.flags.Has(OpenNonBlock))
+		if err != nil {
+			return nil, err
+		}
+		return buf[:n], nil
+	}
 	return h.fs.Read(ctx, h.path, h.caller)
 }
 
@@ -246,6 +255,11 @@ func (h *Handle) Write(ctx context.Context, payload []byte) error {
 	}
 	if !h.flags.Has(OpenWrite) && !h.flags.Has(OpenAppend) {
 		return posix(EACCES, OpWrite, h.path, nil)
+	}
+	if h.mount.Kind == KindStream {
+		b := h.fs.streams.getOrCreate(h.path, h.mount.Stream)
+		_, err := b.write(payload, h.flags.Has(OpenNonBlock))
+		return err
 	}
 	if h.policy.Mode != WriteBuffered {
 		return h.fs.Write(ctx, h.path, payload, h.caller)
