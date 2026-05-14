@@ -5,7 +5,9 @@ package fuse
 import (
 	"context"
 	"errors"
+	"path"
 	"path/filepath"
+	"sync"
 	"syscall"
 
 	"github.com/hanwen/go-fuse/v2/fs"
@@ -14,7 +16,8 @@ import (
 )
 
 type linuxState struct {
-	srv *fuse.Server
+	srv  *fuse.Server
+	root *rootNode
 }
 
 func (s *Server) Mount(ctx context.Context) error {
@@ -31,17 +34,22 @@ func (s *Server) Mount(ctx context.Context) error {
 		opts.MountOptions.Options = append(opts.MountOptions.Options, "ro")
 	}
 
-	root := &rootNode{fsys: s.fs}
+	root := &rootNode{fsys: s.fs, inodes: make(map[string]*fs.Inode)}
 	server, err := fs.Mount(s.mountPoint, root, opts)
 	if err != nil {
 		return err
 	}
-	s.state = &linuxState{srv: server}
+	s.state = &linuxState{srv: server, root: root}
 	go s.state.(*linuxState).srv.Serve()
 	if err := s.state.(*linuxState).srv.WaitMount(); err != nil {
 		_ = s.state.(*linuxState).srv.Unmount()
 		return err
 	}
+
+	// Wire core events to kernel inotify invalidations.
+	s.fs.RegisterNotifier(func(e core.Event) {
+		root.handleEvent(e)
+	})
 	return nil
 }
 
@@ -60,7 +68,9 @@ func (s *Server) Unmount(_ context.Context) error {
 
 type rootNode struct {
 	fs.Inode
-	fsys *core.FileSystem
+	fsys   *core.FileSystem
+	mu     sync.RWMutex
+	inodes map[string]*fs.Inode
 }
 
 var _ fs.NodeGetattrer = (*rootNode)(nil)
@@ -78,15 +88,19 @@ func (r *rootNode) attr(out *fuse.AttrOut) syscall.Errno {
 }
 
 func (r *rootNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
-	path := filepath.Join("/", name)
-	stat, err := r.fsys.Stat(path, core.CallerIdentity{})
+	p := filepath.Join("/", name)
+	stat, err := r.fsys.Stat(p, core.CallerIdentity{})
 	if err != nil {
 		return nil, toErrno(err)
 	}
-	node := &pathNode{path: path, fsys: r.fsys}
+	node := &pathNode{path: p, fsys: r.fsys}
 	fillEntryOut(out, stat)
 	mode := fileMode(stat)
-	return r.NewInode(ctx, node, fs.StableAttr{Mode: uint32(mode)}), fs.OK
+	ino := r.NewInode(ctx, node, fs.StableAttr{Mode: uint32(mode)})
+	r.mu.Lock()
+	r.inodes[p] = ino
+	r.mu.Unlock()
+	return ino, fs.OK
 }
 
 func (r *rootNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
@@ -99,6 +113,47 @@ func (r *rootNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 
 func (r *rootNode) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, syscall.Errno) {
 	return nil, 0, syscall.EISDIR
+}
+
+// handleEvent forwards core events to the FUSE kernel cache.
+func (r *rootNode) handleEvent(e core.Event) {
+	switch e.Kind {
+	case core.EventWrite:
+		r.mu.RLock()
+		ino, ok := r.inodes[e.Path]
+		r.mu.RUnlock()
+		if ok {
+			ino.NotifyContent(0, -1)
+		}
+		// Also invalidate the directory entry so inotify watchers refresh.
+		r.notifyParentEntry(e.Path)
+
+	case core.EventCreate:
+		r.notifyParentEntry(e.Path)
+
+	case core.EventRemove:
+		r.mu.Lock()
+		delete(r.inodes, e.Path)
+		r.mu.Unlock()
+		r.notifyParentEntry(e.Path)
+	}
+}
+
+func (r *rootNode) notifyParentEntry(p string) {
+	dir, name := path.Split(p)
+	dir = path.Clean(dir)
+	if dir == "." {
+		dir = "/"
+	}
+	if name == "" {
+		return
+	}
+	r.mu.RLock()
+	parent, ok := r.inodes[dir]
+	r.mu.RUnlock()
+	if ok {
+		parent.NotifyEntry(name)
+	}
 }
 
 // pathNode represents any non-root path in the skills-fs namespace.
