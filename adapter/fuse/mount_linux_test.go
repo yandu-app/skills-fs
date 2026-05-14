@@ -11,18 +11,18 @@ import (
 
 func TestToErrnoMapping(t *testing.T) {
 	cases := []struct {
-		code   core.Errno
-		want   int
+		code core.Errno
+		want int
 	}{
-		{core.ENOENT, 2},    // syscall.ENOENT
-		{core.EACCES, 13},   // syscall.EACCES
-		{core.EINVAL, 22},   // syscall.EINVAL
-		{core.EBUSY, 16},    // syscall.EBUSY
-		{core.EAGAIN, 11},   // syscall.EAGAIN
-		{core.ENOSPC, 28},   // syscall.ENOSPC
-		{core.ENOTDIR, 20},  // syscall.ENOTDIR
-		{core.EISDIR, 21},   // syscall.EISDIR
-		{core.ENOSYS, 38},   // syscall.ENOSYS
+		{core.ENOENT, 2},      // syscall.ENOENT
+		{core.EACCES, 13},     // syscall.EACCES
+		{core.EINVAL, 22},     // syscall.EINVAL
+		{core.EBUSY, 16},      // syscall.EBUSY
+		{core.EAGAIN, 11},     // syscall.EAGAIN
+		{core.ENOSPC, 28},     // syscall.ENOSPC
+		{core.ENOTDIR, 20},    // syscall.ENOTDIR
+		{core.EISDIR, 21},     // syscall.EISDIR
+		{core.ENOSYS, 38},     // syscall.ENOSYS
 		{core.ETIMEDOUT, 110}, // syscall.ETIMEDOUT
 	}
 	for _, tc := range cases {

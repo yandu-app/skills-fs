@@ -5,6 +5,13 @@ import (
 	"testing"
 )
 
+func TestPosixErrorStringWithoutErr(t *testing.T) {
+	err := posix(ENOENT, OpRead, "/x", nil)
+	if err.Error() != "ENOENT read /x" {
+		t.Fatalf("unexpected error string: %q", err.Error())
+	}
+}
+
 func TestMapProviderErrorTable(t *testing.T) {
 	tests := map[string]Errno{
 		"NOT_FOUND":         ENOENT,

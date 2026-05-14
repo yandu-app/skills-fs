@@ -22,8 +22,8 @@ type notifier func(Event)
 
 // eventBus multiplexes filesystem mutations to registered listeners.
 type eventBus struct {
-	mu    sync.RWMutex
-	subs  []notifier
+	mu   sync.RWMutex
+	subs []notifier
 }
 
 func newEventBus() *eventBus {
