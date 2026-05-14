@@ -48,6 +48,19 @@ func (c GlobalConfig) withDefaults() GlobalConfig {
 	return c
 }
 
+type BackpressureMode int
+
+const (
+	BackpressureBlock BackpressureMode = iota
+	BackpressureDrop
+	BackpressureError
+)
+
+type StreamConfig struct {
+	Capacity int
+	Mode     BackpressureMode
+}
+
 type MountEntry struct {
 	ID           uint64
 	Path         string
@@ -59,6 +72,7 @@ type MountEntry struct {
 	Serial       bool
 	BufferPolicy *WriteBufferPolicy
 	Skill        *SkillConfig
+	Stream       *StreamConfig
 	Visibility   string
 
 	BlobData []byte

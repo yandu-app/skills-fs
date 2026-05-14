@@ -14,6 +14,7 @@ type FileSystem struct {
 	providers map[string]Provider
 	handles   *handleManager
 	locks     *lockManager
+	streams   *streamManager
 	metrics   *Metrics
 	skills    *SkillGenerator
 	mu        sync.RWMutex
@@ -27,6 +28,7 @@ func NewFS(cfg GlobalConfig) *FileSystem {
 		providers: make(map[string]Provider),
 		handles:   newHandleManager(cfg.MaxOpenHandles),
 		locks:     newLockManager(),
+		streams:   newStreamManager(),
 		metrics:   newMetrics(),
 		skills:    NewSkillGenerator(cfg.SkillsRoot),
 	}
@@ -101,6 +103,7 @@ func (fs *FileSystem) Unmount(path string) error {
 		}
 	}
 	fs.locks.purge(path)
+	fs.streams.remove(path)
 	return nil
 }
 
@@ -145,7 +148,7 @@ func (fs *FileSystem) Stat(path string, caller CallerIdentity) (Stat, error) {
 	case KindLink:
 		size = int64(len(m.LinkPath))
 	case KindStream:
-		size = 0
+		size = int64(fs.streams.size(path))
 	default:
 		return Stat{}, posix(EINVAL, OpStat, path, nil)
 	}
@@ -245,6 +248,16 @@ func (fs *FileSystem) Read(ctx context.Context, path string, caller CallerIdenti
 		target := []byte(m.LinkPath)
 		fs.mu.RUnlock()
 		return target, nil
+	case KindStream:
+		cfg := m.Stream
+		fs.mu.RUnlock()
+		b := fs.streams.getOrCreate(path, cfg)
+		buf := make([]byte, streamReadChunk)
+		n, err := b.read(buf, false)
+		if err != nil {
+			return nil, err
+		}
+		return buf[:n], nil
 	case KindDir:
 		fs.mu.RUnlock()
 		return nil, posix(EISDIR, OpRead, path, nil)
@@ -296,6 +309,12 @@ func (fs *FileSystem) Write(ctx context.Context, path string, payload []byte, ca
 			_, err := invokeProvider(ctx, provider, cap, OpWrite, path, params, payload, caller)
 			return err
 		})
+	case KindStream:
+		cfg := m.Stream
+		fs.mu.RUnlock()
+		b := fs.streams.getOrCreate(path, cfg)
+		_, err := b.write(payload, false)
+		return err
 	default:
 		fs.mu.RUnlock()
 		return posix(ENOSYS, OpWrite, path, nil)
