@@ -11,11 +11,13 @@ Agent tools -> FUSE/WebDAV/Bindings -> core.FileSystem -> Provider.Invoke
 The Go core owns:
 
 - Mount registration and route conflict checks.
-- Path parameter extraction.
+- Path parameter extraction (zero-allocation inline array).
 - Unix-style mode checks.
 - Provider dispatch and POSIX error mapping.
 - Generated Agent Skill directories.
-- Future handle, lock, buffering, stream, stat cache, and observability state.
+- Handle lifecycle, advisory locking, write buffering, stream ring buffers.
+- Event notification bus.
+- Prometheus-compatible metrics at `/sys/metrics`.
 
 Host bindings own only:
 
@@ -26,10 +28,8 @@ Host bindings own only:
 ## Package Layout
 
 - `core`: public embedded filesystem API and in-memory semantics.
-- `adapter`: adapter contracts shared by FUSE and WebDAV.
-- `adapter/fuse`: FUSE server package boundary. The current bootstrap uses a no-driver stub until platform-specific dependencies are introduced.
-- `adapter/webdav`: WebDAV fallback package boundary. The current bootstrap uses a no-listener stub until HTTP semantics are implemented.
+- `adapter`: adapter contracts (`MountedFS`, `MountOptions`, `Factory`) shared by FUSE and WebDAV.
+- `adapter/fuse`: Linux FUSE implementation using `go-fuse/v2`. Non-Linux platforms compile a stub returning `ErrNotImplemented`.
+- `adapter/webdav`: WebDAV fallback package boundary. Currently a no-listener stub.
 - `bench`: required benchmark entry points.
 - `docs`: handoff, architecture, testing, and milestone documents.
-
-Adapter packages will be added under `adapter/fuse`, `adapter/webdav`, and `binding/node` once the core contracts are stable.
