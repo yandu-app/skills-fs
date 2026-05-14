@@ -17,6 +17,7 @@ type FileSystem struct {
 	streams   *streamManager
 	metrics   *Metrics
 	skills    *SkillGenerator
+	events    *eventBus
 	mu        sync.RWMutex
 }
 
@@ -31,6 +32,7 @@ func NewFS(cfg GlobalConfig) *FileSystem {
 		streams:   newStreamManager(),
 		metrics:   newMetrics(),
 		skills:    NewSkillGenerator(cfg.SkillsRoot),
+		events:    newEventBus(),
 	}
 }
 
@@ -45,6 +47,10 @@ func (fs *FileSystem) RegisterProvider(p Provider) error {
 	}
 	fs.providers[p.ID()] = p
 	return nil
+}
+
+func (fs *FileSystem) RegisterNotifier(fn func(Event)) {
+	fs.events.register(fn)
 }
 
 func (fs *FileSystem) Mount(path string, entry MountEntry) error {
@@ -87,6 +93,7 @@ func (fs *FileSystem) Mount(path string, entry MountEntry) error {
 			return err
 		}
 	}
+	fs.events.emit(Event{Path: path, Kind: EventCreate})
 	return nil
 }
 
@@ -104,6 +111,7 @@ func (fs *FileSystem) Unmount(path string) error {
 	}
 	fs.locks.purge(path)
 	fs.streams.remove(path)
+	fs.events.emit(Event{Path: path, Kind: EventRemove})
 	return nil
 }
 
@@ -296,6 +304,7 @@ func (fs *FileSystem) Write(ctx context.Context, path string, payload []byte, ca
 			return posix(EACCES, OpWrite, path, nil)
 		}
 		m.BlobData = append(m.BlobData[:0], payload...)
+		fs.events.emit(Event{Path: path, Kind: EventWrite})
 		return nil
 	case KindAPI:
 		cap, provider, err := fs.providerFor(m, OpWrite, path)
@@ -314,7 +323,11 @@ func (fs *FileSystem) Write(ctx context.Context, path string, payload []byte, ca
 		fs.mu.RUnlock()
 		b := fs.streams.getOrCreate(path, cfg)
 		_, err := b.write(payload, false)
-		return err
+		if err != nil {
+			return err
+		}
+		fs.events.emit(Event{Path: path, Kind: EventWrite})
+		return nil
 	default:
 		fs.mu.RUnlock()
 		return posix(ENOSYS, OpWrite, path, nil)
