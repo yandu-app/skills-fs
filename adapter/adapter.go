@@ -10,8 +10,10 @@ import (
 var ErrNotImplemented = errors.New("adapter not implemented")
 
 type MountOptions struct {
-	ReadOnly   bool
-	AllowOther bool
+	ReadOnly    bool
+	AllowOther  bool
+	TLSCertFile string
+	TLSKeyFile  string
 }
 
 type MountedFS interface {
