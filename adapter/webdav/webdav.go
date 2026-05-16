@@ -118,8 +118,8 @@ func (s *Server) handleGet(w http.ResponseWriter, r *http.Request, path string, 
 	stat, err := s.fs.Stat(path, caller)
 	if err == nil {
 		w.Header().Set("Content-Type", contentTypeFromKind(stat.Kind))
-		w.Header().Set("Content-Length", fmt.Sprintf("%d", stat.Size))
 	}
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))
 	w.Write(data)
 }
 

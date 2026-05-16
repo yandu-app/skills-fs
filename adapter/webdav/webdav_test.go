@@ -6,10 +6,12 @@ import (
 	"encoding/xml"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/skills-fs/skills-fs/adapter"
 	"github.com/skills-fs/skills-fs/core"
+	httpprovider "github.com/skills-fs/skills-fs/provider/http"
 )
 
 func TestWebDAVGetAndPut(t *testing.T) {
@@ -447,5 +449,52 @@ func TestWebDAVPutNotFound(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("expected 404 for PUT to non-existent path, got %d", resp.StatusCode)
+	}
+}
+
+func TestWebDAVHTTPProviderIntegration(t *testing.T) {
+	// Start a backend HTTP provider.
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		w.Write([]byte("from-remote"))
+	}))
+	defer backend.Close()
+
+	// Set up filesystem with HTTP provider and API mount.
+	fs := core.NewFS(core.GlobalConfig{})
+	p := httpprovider.NewProvider("remote", backend.URL)
+	if err := fs.RegisterProvider(p); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Mount("/api/greet", core.MountEntry{
+		Kind: core.KindAPI,
+		Mode: 0o444,
+		Ops: map[core.OpCode]*core.CapConfig{
+			core.OpRead: {ProviderID: "remote", Action: "greet"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Start WebDAV server.
+	server := New(fs, "127.0.0.1:0", adapter.MountOptions{})
+	if err := server.Mount(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Unmount(context.Background())
+
+	// Read through WebDAV.
+	baseURL := "http://" + server.ln.Addr().String()
+	resp, err := http.Get(baseURL + "/api/greet")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET status = %d", resp.StatusCode)
+	}
+	data, _ := io.ReadAll(resp.Body)
+	if string(data) != "from-remote" {
+		t.Fatalf("GET body = %q", string(data))
 	}
 }
