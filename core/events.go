@@ -45,3 +45,9 @@ func (eb *eventBus) emit(e Event) {
 		fn(e)
 	}
 }
+
+func (eb *eventBus) clear() {
+	eb.mu.Lock()
+	defer eb.mu.Unlock()
+	eb.subs = nil
+}
