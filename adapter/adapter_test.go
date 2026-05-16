@@ -36,13 +36,16 @@ func TestFuseStub(t *testing.T) {
 	}
 }
 
-func TestWebDAVStub(t *testing.T) {
+func TestWebDAVServer(t *testing.T) {
 	fsys := core.NewFS(core.GlobalConfig{})
 	server := webdav.New(fsys, "127.0.0.1:0", adapter.MountOptions{ReadOnly: true})
 	if server.FileSystem() != fsys || server.MountPoint() != "127.0.0.1:0" || !server.Options().ReadOnly {
 		t.Fatalf("unexpected webdav server state")
 	}
-	if err := server.Mount(context.Background()); !errors.Is(err, adapter.ErrNotImplemented) {
-		t.Fatalf("expected ErrNotImplemented, got %v", err)
+	if err := server.Mount(context.Background()); err != nil {
+		t.Fatalf("unexpected mount error: %v", err)
+	}
+	if err := server.Unmount(context.Background()); err != nil {
+		t.Fatalf("unexpected unmount error: %v", err)
 	}
 }
