@@ -36,6 +36,25 @@ func NewFS(cfg GlobalConfig) *FileSystem {
 	}
 }
 
+// CloseAllHandles forcibly closes every open handle, flushing buffered writes
+// and releasing advisory locks. Errors from individual closes are discarded;
+// callers should treat the filesystem as unusable after this call.
+func (fs *FileSystem) CloseAllHandles() {
+	for _, h := range fs.handles.snapshot() {
+		_ = h.Close(context.Background())
+	}
+}
+
+// Shutdown performs a graceful teardown: it closes all handles, closes all
+// stream buffers, and clears event notifiers. After Shutdown the filesystem
+// should not be used.
+func (fs *FileSystem) Shutdown(ctx context.Context) error {
+	fs.CloseAllHandles()
+	fs.streams.closeAll()
+	fs.events.clear()
+	return nil
+}
+
 func (fs *FileSystem) RegisterProvider(p Provider) error {
 	if p == nil || p.ID() == "" {
 		return posix(EINVAL, "", "", nil)

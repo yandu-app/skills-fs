@@ -45,6 +45,14 @@ func (sm *streamManager) remove(path string) {
 	}
 }
 
+func (sm *streamManager) closeAll() {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	for _, b := range sm.buffers {
+		b.close()
+	}
+}
+
 func (sm *streamManager) size(path string) int {
 	sm.mu.RLock()
 	b, ok := sm.buffers[path]

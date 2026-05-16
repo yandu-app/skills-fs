@@ -872,3 +872,87 @@ func TestSkillGeneratorRootAndRemoveValidation(t *testing.T) {
 		t.Fatalf("expected invalid remove EINVAL, got %v", err)
 	}
 }
+
+func TestCloseAllHandles(t *testing.T) {
+	fs := NewFS(GlobalConfig{})
+	if err := fs.Mount("/blob", MountEntry{Kind: KindBlob, Mode: 0o666, BlobData: []byte("x")}); err != nil {
+		t.Fatal(err)
+	}
+	h1, err := fs.Open("/blob", OpenRead, CallerIdentity{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h2, err := fs.Open("/blob", OpenRead, CallerIdentity{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fs.handles.Active() != 2 {
+		t.Fatalf("expected 2 active handles, got %d", fs.handles.Active())
+	}
+	fs.CloseAllHandles()
+	if fs.handles.Active() != 0 {
+		t.Fatalf("expected 0 active handles after CloseAllHandles, got %d", fs.handles.Active())
+	}
+	if _, err := h1.ReadAll(context.Background()); !IsCode(err, EBUSY) {
+		t.Fatalf("expected EBUSY on closed handle h1, got %v", err)
+	}
+	if _, err := h2.ReadAll(context.Background()); !IsCode(err, EBUSY) {
+		t.Fatalf("expected EBUSY on closed handle h2, got %v", err)
+	}
+}
+
+func TestShutdown(t *testing.T) {
+	fs := NewFS(GlobalConfig{})
+	if err := fs.Mount("/blob", MountEntry{Kind: KindBlob, Mode: 0o666, BlobData: []byte("x")}); err != nil {
+		t.Fatal(err)
+	}
+	h, err := fs.Open("/blob", OpenRead, CallerIdentity{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if fs.handles.Active() != 0 {
+		t.Fatalf("expected 0 active handles after shutdown, got %d", fs.handles.Active())
+	}
+	if _, err := h.ReadAll(context.Background()); !IsCode(err, EBUSY) {
+		t.Fatalf("expected EBUSY after shutdown, got %v", err)
+	}
+}
+
+func TestShutdownClosesStreams(t *testing.T) {
+	fs := NewFS(GlobalConfig{})
+	if err := fs.Mount("/events", MountEntry{
+		Kind: KindStream,
+		Mode: 0o666,
+		Stream: &StreamConfig{
+			Capacity: 64,
+			Mode:     BackpressureBlock,
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Write(context.Background(), "/events", []byte("hello"), CallerIdentity{}); err != nil {
+		t.Fatal(err)
+	}
+	// Drain the written data before shutdown.
+	data, err := fs.Read(context.Background(), "/events", CallerIdentity{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "hello" {
+		t.Fatalf("unexpected pre-shutdown read: %q", data)
+	}
+	if err := fs.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	// After shutdown the stream buffer is closed; reading should return EOF (0, nil).
+	data, err = fs.Read(context.Background(), "/events", CallerIdentity{})
+	if err != nil {
+		t.Fatalf("expected EOF after stream close, got err=%v", err)
+	}
+	if len(data) != 0 {
+		t.Fatalf("expected empty read after stream close, got %q", data)
+	}
+}
