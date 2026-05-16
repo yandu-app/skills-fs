@@ -162,7 +162,7 @@ func TestWebDAVOptions(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("OPTIONS status = %d", resp.StatusCode)
 	}
-	if resp.Header.Get("DAV") != "1" {
+	if resp.Header.Get("DAV") != "1, 2" {
 		t.Fatalf("DAV header = %q", resp.Header.Get("DAV"))
 	}
 }
@@ -187,7 +187,10 @@ type decodePropstat struct {
 type decodeProp struct {
 	DisplayName      string         `xml:"DAV: displayname"`
 	GetContentLength int64          `xml:"DAV: getcontentlength"`
+	GetContentType   string         `xml:"DAV: getcontenttype"`
 	ResourceType     *decodeResType `xml:"DAV: resourcetype"`
+	CreationDate     string         `xml:"DAV: creationdate"`
+	GetLastModified  string         `xml:"DAV: getlastmodified"`
 }
 
 type decodeResType struct {
@@ -759,6 +762,104 @@ func TestWebDAVCopyNotFound(t *testing.T) {
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d", resp.StatusCode)
 	}
+}
+
+func TestWebDAVOptionsDAVHeader(t *testing.T) {
+	server := New(core.NewFS(core.GlobalConfig{}), "127.0.0.1:0", adapter.MountOptions{})
+	if err := server.Mount(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Unmount(context.Background())
+
+	baseURL := "http://" + server.ln.Addr().String()
+	resp, err := http.DefaultClient.Do(mustNewRequest(t, "OPTIONS", baseURL+"/", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	if got := resp.Header.Get("DAV"); got != "1, 2" {
+		t.Fatalf("expected DAV '1, 2', got %q", got)
+	}
+}
+
+func TestWebDAVLockUnlockStub(t *testing.T) {
+	server := New(core.NewFS(core.GlobalConfig{}), "127.0.0.1:0", adapter.MountOptions{})
+	if err := server.Mount(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Unmount(context.Background())
+
+	baseURL := "http://" + server.ln.Addr().String()
+	resp, err := http.DefaultClient.Do(mustNewRequest(t, "LOCK", baseURL+"/x", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotImplemented {
+		t.Fatalf("expected 501 for LOCK, got %d", resp.StatusCode)
+	}
+
+	resp, err = http.DefaultClient.Do(mustNewRequest(t, "UNLOCK", baseURL+"/x", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotImplemented {
+		t.Fatalf("expected 501 for UNLOCK, got %d", resp.StatusCode)
+	}
+}
+
+func TestWebDAVPropfindContentType(t *testing.T) {
+	fs := core.NewFS(core.GlobalConfig{})
+	if err := fs.Mount("/blob", core.MountEntry{Kind: core.KindBlob, Mode: 0o666, BlobData: []byte("x")}); err != nil {
+		t.Fatal(err)
+	}
+	server := New(fs, "127.0.0.1:0", adapter.MountOptions{})
+	if err := server.Mount(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Unmount(context.Background())
+
+	baseURL := "http://" + server.ln.Addr().String()
+	req := mustNewRequest(t, "PROPFIND", baseURL+"/blob", nil)
+	req.Header.Set("Depth", "0")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusMultiStatus {
+		t.Fatalf("expected 207, got %d", resp.StatusCode)
+	}
+	var ms decodeMultistatus
+	if err := xml.NewDecoder(resp.Body).Decode(&ms); err != nil {
+		t.Fatal(err)
+	}
+	if len(ms.Responses) != 1 {
+		t.Fatalf("expected 1 response, got %d", len(ms.Responses))
+	}
+	prop := ms.Responses[0].Propstat.Prop
+	if prop.GetContentType != "application/octet-stream" {
+		t.Fatalf("expected content type, got %q", prop.GetContentType)
+	}
+	if prop.CreationDate == "" {
+		t.Fatal("expected creationdate")
+	}
+	if prop.GetLastModified == "" {
+		t.Fatal("expected getlastmodified")
+	}
+}
+
+func mustNewRequest(t *testing.T, method, url string, body io.Reader) *http.Request {
+	t.Helper()
+	req, err := http.NewRequest(method, url, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return req
 }
 
 func writeTempCert(t *testing.T) (certFile, keyFile string) {

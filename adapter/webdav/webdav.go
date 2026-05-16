@@ -90,7 +90,7 @@ func (s *Server) Unmount(ctx context.Context) error {
 func (s *Server) handleWebDAV(w http.ResponseWriter, r *http.Request) {
 	if s.opts.ReadOnly {
 		switch r.Method {
-		case http.MethodPut, http.MethodDelete, http.MethodPatch, http.MethodPost, "MKCOL", "COPY", "MOVE":
+		case http.MethodPut, http.MethodDelete, http.MethodPatch, http.MethodPost, "MKCOL", "COPY", "MOVE", "LOCK", "UNLOCK":
 			http.Error(w, "read-only filesystem", http.StatusForbidden)
 			return
 		}
@@ -119,10 +119,14 @@ func (s *Server) handleWebDAV(w http.ResponseWriter, r *http.Request) {
 		s.handleMove(w, r, path, caller)
 	case "PROPFIND":
 		s.handlePropfind(w, r, path, caller)
+	case "LOCK":
+		s.handleLock(w, r, path, caller)
+	case "UNLOCK":
+		s.handleUnlock(w, r, path, caller)
 	case http.MethodOptions:
 		s.handleOptions(w, r)
 	default:
-		w.Header().Set("Allow", "GET, HEAD, PUT, DELETE, MKCOL, COPY, MOVE, PROPFIND, OPTIONS")
+		w.Header().Set("Allow", "GET, HEAD, PUT, DELETE, MKCOL, COPY, MOVE, PROPFIND, OPTIONS, LOCK, UNLOCK")
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
 }
@@ -173,8 +177,16 @@ func (s *Server) handlePut(w http.ResponseWriter, r *http.Request, path string, 
 
 func (s *Server) handleOptions(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Allow", "GET, HEAD, PUT, DELETE, MKCOL, COPY, MOVE, PROPFIND, OPTIONS")
-	w.Header().Set("DAV", "1")
+	w.Header().Set("DAV", "1, 2")
 	w.WriteHeader(http.StatusOK)
+}
+
+func (s *Server) handleLock(w http.ResponseWriter, r *http.Request, path string, caller core.CallerIdentity) {
+	http.Error(w, "not implemented", http.StatusNotImplemented)
+}
+
+func (s *Server) handleUnlock(w http.ResponseWriter, r *http.Request, path string, caller core.CallerIdentity) {
+	http.Error(w, "not implemented", http.StatusNotImplemented)
 }
 
 func (s *Server) handleMkcol(w http.ResponseWriter, r *http.Request, path string, caller core.CallerIdentity) {
@@ -339,7 +351,10 @@ func (s *Server) propfindResponse(p string, stat core.Stat) response {
 			Prop: prop{
 				DisplayName:      path.Base(p),
 				GetContentLength: stat.Size,
+				GetContentType:   contentTypeFromKind(stat.Kind),
 				ResourceType:     rt,
+				CreationDate:     "1970-01-01T00:00:00Z",
+				GetLastModified:  "Thu, 01 Jan 1970 00:00:00 GMT",
 			},
 			Status: "HTTP/1.1 200 OK",
 		},
@@ -369,7 +384,10 @@ type prop struct {
 	XMLName          xml.Name      `xml:"D:prop"`
 	DisplayName      string        `xml:"D:displayname"`
 	GetContentLength int64         `xml:"D:getcontentlength"`
+	GetContentType   string        `xml:"D:getcontenttype"`
 	ResourceType     *resourceType `xml:"D:resourcetype"`
+	CreationDate     string        `xml:"D:creationdate"`
+	GetLastModified  string        `xml:"D:getlastmodified"`
 }
 
 type resourceType struct {
