@@ -3,6 +3,7 @@ package webdav
 import (
 	"bytes"
 	"context"
+	"encoding/xml"
 	"io"
 	"net/http"
 	"testing"
@@ -151,5 +152,144 @@ func TestWebDAVOptions(t *testing.T) {
 	}
 	if resp.Header.Get("DAV") != "1" {
 		t.Fatalf("DAV header = %q", resp.Header.Get("DAV"))
+	}
+}
+
+// decode-only structs using full namespace URI for proper xml.Unmarshal.
+type decodeMultistatus struct {
+	XMLName   xml.Name         `xml:"DAV: multistatus"`
+	Responses []decodeResponse `xml:"DAV: response"`
+}
+
+type decodeResponse struct {
+	XMLName  xml.Name     `xml:"DAV: response"`
+	Href     string       `xml:"DAV: href"`
+	Propstat decodePropstat `xml:"DAV: propstat"`
+}
+
+type decodePropstat struct {
+	Prop   decodeProp `xml:"DAV: prop"`
+	Status string     `xml:"DAV: status"`
+}
+
+type decodeProp struct {
+	DisplayName      string            `xml:"DAV: displayname"`
+	GetContentLength int64             `xml:"DAV: getcontentlength"`
+	ResourceType     *decodeResType    `xml:"DAV: resourcetype"`
+}
+
+type decodeResType struct {
+	Collection string `xml:"DAV: collection"`
+}
+
+func TestWebDAVPropfindDir(t *testing.T) {
+	fs := core.NewFS(core.GlobalConfig{})
+	if err := fs.Mount("/dir", core.MountEntry{Kind: core.KindDir, Mode: 0o755}); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Mount("/dir/a", core.MountEntry{Kind: core.KindBlob, Mode: 0o644, BlobData: []byte("alpha")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Mount("/dir/b", core.MountEntry{Kind: core.KindBlob, Mode: 0o644, BlobData: []byte("beta")}); err != nil {
+		t.Fatal(err)
+	}
+
+	server := New(fs, "127.0.0.1:0", adapter.MountOptions{})
+	if err := server.Mount(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Unmount(context.Background())
+
+	baseURL := "http://" + server.ln.Addr().String()
+	req, _ := http.NewRequest("PROPFIND", baseURL+"/dir", nil)
+	req.Header.Set("Depth", "1")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusMultiStatus {
+		t.Fatalf("PROPFIND status = %d", resp.StatusCode)
+	}
+
+	var ms decodeMultistatus
+	if err := xml.NewDecoder(resp.Body).Decode(&ms); err != nil {
+		t.Fatalf("decode multistatus: %v", err)
+	}
+	if len(ms.Responses) != 3 {
+		t.Fatalf("expected 3 responses, got %d", len(ms.Responses))
+	}
+	hrefs := make(map[string]bool)
+	for _, r := range ms.Responses {
+		hrefs[r.Href] = true
+		if r.Href == "/dir" {
+			if r.Propstat.Prop.ResourceType == nil {
+				t.Fatalf("/dir should be a collection")
+			}
+		}
+	}
+	if !hrefs["/dir"] || !hrefs["/dir/a"] || !hrefs["/dir/b"] {
+		t.Fatalf("missing hrefs: %+v", hrefs)
+	}
+}
+
+func TestWebDAVPropfindFile(t *testing.T) {
+	fs := core.NewFS(core.GlobalConfig{})
+	if err := fs.Mount("/file", core.MountEntry{Kind: core.KindBlob, Mode: 0o644, BlobData: []byte("data")}); err != nil {
+		t.Fatal(err)
+	}
+
+	server := New(fs, "127.0.0.1:0", adapter.MountOptions{})
+	if err := server.Mount(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Unmount(context.Background())
+
+	baseURL := "http://" + server.ln.Addr().String()
+	req, _ := http.NewRequest("PROPFIND", baseURL+"/file", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusMultiStatus {
+		t.Fatalf("PROPFIND status = %d", resp.StatusCode)
+	}
+
+	var ms decodeMultistatus
+	if err := xml.NewDecoder(resp.Body).Decode(&ms); err != nil {
+		t.Fatalf("decode multistatus: %v", err)
+	}
+	if len(ms.Responses) != 1 {
+		t.Fatalf("expected 1 response, got %d", len(ms.Responses))
+	}
+	if ms.Responses[0].Href != "/file" {
+		t.Fatalf("expected href /file, got %s", ms.Responses[0].Href)
+	}
+	if ms.Responses[0].Propstat.Prop.GetContentLength != 4 {
+		t.Fatalf("expected content length 4, got %d", ms.Responses[0].Propstat.Prop.GetContentLength)
+	}
+	if ms.Responses[0].Propstat.Prop.ResourceType != nil {
+		t.Fatalf("file should not have a collection resource type")
+	}
+}
+
+func TestWebDAVPropfindNotFound(t *testing.T) {
+	fs := core.NewFS(core.GlobalConfig{})
+	server := New(fs, "127.0.0.1:0", adapter.MountOptions{})
+	if err := server.Mount(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Unmount(context.Background())
+
+	baseURL := "http://" + server.ln.Addr().String()
+	req, _ := http.NewRequest("PROPFIND", baseURL+"/missing", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", resp.StatusCode)
 	}
 }
