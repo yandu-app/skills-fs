@@ -552,3 +552,76 @@ func TestWebDAVHTTPProviderIntegration(t *testing.T) {
 		t.Fatalf("GET body = %q", string(data))
 	}
 }
+
+func TestWebDAVMkcol(t *testing.T) {
+	fs := core.NewFS(core.GlobalConfig{})
+	server := New(fs, "127.0.0.1:0", adapter.MountOptions{})
+	if err := server.Mount(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Unmount(context.Background())
+
+	baseURL := "http://" + server.ln.Addr().String()
+	req, _ := http.NewRequest("MKCOL", baseURL+"/newdir", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201, got %d", resp.StatusCode)
+	}
+
+	// Verify it exists
+	stat, err := fs.Stat("/newdir", core.CallerIdentity{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stat.Kind != core.KindDir {
+		t.Fatalf("expected dir, got %s", stat.Kind)
+	}
+}
+
+func TestWebDAVMkcolConflict(t *testing.T) {
+	fs := core.NewFS(core.GlobalConfig{})
+	if err := fs.Mount("/dir", core.MountEntry{Kind: core.KindDir, Mode: 0o755}); err != nil {
+		t.Fatal(err)
+	}
+
+	server := New(fs, "127.0.0.1:0", adapter.MountOptions{})
+	if err := server.Mount(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Unmount(context.Background())
+
+	baseURL := "http://" + server.ln.Addr().String()
+	req, _ := http.NewRequest("MKCOL", baseURL+"/dir", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("expected 409, got %d", resp.StatusCode)
+	}
+}
+
+func TestWebDAVMkcolReadOnly(t *testing.T) {
+	fs := core.NewFS(core.GlobalConfig{})
+	server := New(fs, "127.0.0.1:0", adapter.MountOptions{ReadOnly: true})
+	if err := server.Mount(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Unmount(context.Background())
+
+	baseURL := "http://" + server.ln.Addr().String()
+	req, _ := http.NewRequest("MKCOL", baseURL+"/dir", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", resp.StatusCode)
+	}
+}
