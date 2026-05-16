@@ -49,7 +49,7 @@ func (s *Server) Mount(ctx context.Context) error {
 	// Wire core events to kernel inotify invalidations.
 	s.fs.RegisterNotifier(func(e core.Event) {
 		root.handleEvent(e)
-	})
+	}, "")
 	return nil
 }
 

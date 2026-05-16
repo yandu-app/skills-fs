@@ -17,7 +17,7 @@ func BenchmarkEventEmit(b *testing.B) {
 			for i := 0; i < listeners; i++ {
 				fs.RegisterNotifier(func(e core.Event) {
 					counter.Add(1)
-				})
+				}, "")
 			}
 			b.ReportAllocs()
 			b.ResetTimer()
