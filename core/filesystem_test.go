@@ -873,6 +873,78 @@ func TestSkillGeneratorRootAndRemoveValidation(t *testing.T) {
 	}
 }
 
+func TestRemoveAliasForUnmount(t *testing.T) {
+	fs := NewFS(GlobalConfig{})
+	if err := fs.Mount("/blob", MountEntry{Kind: KindBlob, Mode: 0o644, BlobData: []byte("x")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Remove("/blob"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fs.Stat("/blob", CallerIdentity{}); !IsCode(err, ENOENT) {
+		t.Fatalf("expected ENOENT after remove, got %v", err)
+	}
+}
+
+func TestRenameBlob(t *testing.T) {
+	fs := NewFS(GlobalConfig{})
+	if err := fs.Mount("/old", MountEntry{Kind: KindBlob, Mode: 0o644, BlobData: []byte("data")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Rename("/old", "/new"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fs.Stat("/old", CallerIdentity{}); !IsCode(err, ENOENT) {
+		t.Fatalf("expected old path gone, got %v", err)
+	}
+	data, err := fs.Read(context.Background(), "/new", CallerIdentity{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "data" {
+		t.Fatalf("unexpected data %q", data)
+	}
+}
+
+func TestRenameDir(t *testing.T) {
+	fs := NewFS(GlobalConfig{})
+	if err := fs.Mount("/old", MountEntry{Kind: KindDir, Mode: 0o755}); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Rename("/old", "/new"); err != nil {
+		t.Fatal(err)
+	}
+	stat, err := fs.Stat("/new", CallerIdentity{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stat.Kind != KindDir {
+		t.Fatalf("expected dir, got %s", stat.Kind)
+	}
+}
+
+func TestRenameMissingSource(t *testing.T) {
+	fs := NewFS(GlobalConfig{})
+	err := fs.Rename("/missing", "/new")
+	if !IsCode(err, ENOENT) {
+		t.Fatalf("expected ENOENT, got %v", err)
+	}
+}
+
+func TestRenameDestinationExists(t *testing.T) {
+	fs := NewFS(GlobalConfig{})
+	if err := fs.Mount("/old", MountEntry{Kind: KindBlob, Mode: 0o644, BlobData: []byte("old")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Mount("/new", MountEntry{Kind: KindBlob, Mode: 0o644, BlobData: []byte("new")}); err != nil {
+		t.Fatal(err)
+	}
+	err := fs.Rename("/old", "/new")
+	if !IsCode(err, EEXIST) {
+		t.Fatalf("expected EEXIST, got %v", err)
+	}
+}
+
 func TestCloseAllHandles(t *testing.T) {
 	fs := NewFS(GlobalConfig{})
 	if err := fs.Mount("/blob", MountEntry{Kind: KindBlob, Mode: 0o666, BlobData: []byte("x")}); err != nil {

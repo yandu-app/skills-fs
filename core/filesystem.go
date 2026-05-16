@@ -134,6 +134,32 @@ func (fs *FileSystem) Unmount(path string) error {
 	return nil
 }
 
+// Remove is a semantic alias for Unmount.
+func (fs *FileSystem) Remove(path string) error {
+	return fs.Unmount(path)
+}
+
+// Rename moves a mount from oldPath to newPath, preserving its properties.
+// It returns an error if oldPath does not exist or newPath is already mounted.
+func (fs *FileSystem) Rename(oldPath, newPath string) error {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	m, err := fs.router.remove(oldPath)
+	if err != nil {
+		return err
+	}
+	m.Path = newPath
+	if _, err := fs.router.add(*m); err != nil {
+		// Attempt to restore original mount on failure.
+		m.Path = oldPath
+		_, _ = fs.router.add(*m)
+		return err
+	}
+	fs.events.emit(Event{Path: oldPath, Kind: EventRemove})
+	fs.events.emit(Event{Path: newPath, Kind: EventCreate})
+	return nil
+}
+
 func (fs *FileSystem) Stat(path string, caller CallerIdentity) (Stat, error) {
 	started := time.Now()
 	var err error
