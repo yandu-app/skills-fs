@@ -164,8 +164,8 @@ type decodeMultistatus struct {
 }
 
 type decodeResponse struct {
-	XMLName  xml.Name     `xml:"DAV: response"`
-	Href     string       `xml:"DAV: href"`
+	XMLName  xml.Name       `xml:"DAV: response"`
+	Href     string         `xml:"DAV: href"`
 	Propstat decodePropstat `xml:"DAV: propstat"`
 }
 
@@ -175,9 +175,9 @@ type decodePropstat struct {
 }
 
 type decodeProp struct {
-	DisplayName      string            `xml:"DAV: displayname"`
-	GetContentLength int64             `xml:"DAV: getcontentlength"`
-	ResourceType     *decodeResType    `xml:"DAV: resourcetype"`
+	DisplayName      string         `xml:"DAV: displayname"`
+	GetContentLength int64          `xml:"DAV: getcontentlength"`
+	ResourceType     *decodeResType `xml:"DAV: resourcetype"`
 }
 
 type decodeResType struct {

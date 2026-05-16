@@ -88,3 +88,66 @@ func TestBuildFSInvalidMode(t *testing.T) {
 		t.Fatal("expected error for invalid mode")
 	}
 }
+
+func TestBuildFSWithProvider(t *testing.T) {
+	cfg := &Config{
+		Providers: []ProviderConfig{{ID: "remote", URL: "http://localhost:9000"}},
+		Mounts: []MountConfig{
+			{Path: "/api", Kind: "api", Provider: "remote", Read: "greet", Write: "create", Serial: true},
+		},
+	}
+	fs, err := cfg.BuildFS()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = fs.Read(nil, "/api", core.CallerIdentity{})
+	if err == nil {
+		t.Fatal("expected error because backend is not reachable")
+	}
+}
+
+func TestBuildFSWithDirAndStream(t *testing.T) {
+	cfg := &Config{
+		Mounts: []MountConfig{
+			{Path: "/dir", Kind: "dir", Mode: "0755"},
+			{Path: "/events", Kind: "stream", Mode: "0666"},
+		},
+	}
+	fs, err := cfg.BuildFS()
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries, err := fs.Readdir("/dir", core.CallerIdentity{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("expected empty dir, got %+v", entries)
+	}
+}
+
+func TestLoadConfigInvalidJSON(t *testing.T) {
+	f, err := os.CreateTemp("", "config-*.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(f.Name())
+	f.WriteString("not json")
+	f.Close()
+	_, err = LoadConfig(f.Name())
+	if err == nil {
+		t.Fatal("expected error for invalid JSON")
+	}
+}
+
+func TestBuildFSDefaultProviderMissing(t *testing.T) {
+	cfg := &Config{
+		Mounts: []MountConfig{
+			{Path: "/api", Kind: "api", Read: "greet"},
+		},
+	}
+	_, err := cfg.BuildFS()
+	if err == nil {
+		t.Fatal("expected error because provider 'remote' is not registered")
+	}
+}

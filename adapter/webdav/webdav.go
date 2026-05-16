@@ -18,11 +18,11 @@ import (
 )
 
 type Server struct {
-	fs     *core.FileSystem
-	addr   string
-	opts   adapter.MountOptions
-	srv    *http.Server
-	ln     net.Listener
+	fs   *core.FileSystem
+	addr string
+	opts adapter.MountOptions
+	srv  *http.Server
+	ln   net.Listener
 }
 
 func New(fs *core.FileSystem, addr string, opts adapter.MountOptions) *Server {
@@ -245,9 +245,9 @@ type propstat struct {
 }
 
 type prop struct {
-	XMLName          xml.Name     `xml:"D:prop"`
-	DisplayName      string       `xml:"D:displayname"`
-	GetContentLength int64        `xml:"D:getcontentlength"`
+	XMLName          xml.Name      `xml:"D:prop"`
+	DisplayName      string        `xml:"D:displayname"`
+	GetContentLength int64         `xml:"D:getcontentlength"`
 	ResourceType     *resourceType `xml:"D:resourcetype"`
 }
 
