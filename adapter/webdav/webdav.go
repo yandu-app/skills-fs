@@ -99,12 +99,14 @@ func (s *Server) handleWebDAV(w http.ResponseWriter, r *http.Request) {
 		s.handleHead(w, r, path, caller)
 	case http.MethodPut:
 		s.handlePut(w, r, path, caller)
+	case http.MethodDelete:
+		s.handleDelete(w, r, path, caller)
 	case "PROPFIND":
 		s.handlePropfind(w, r, path, caller)
 	case http.MethodOptions:
 		s.handleOptions(w, r)
 	default:
-		w.Header().Set("Allow", "GET, HEAD, PUT, PROPFIND, OPTIONS")
+		w.Header().Set("Allow", "GET, HEAD, PUT, DELETE, PROPFIND, OPTIONS")
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
 }
@@ -154,9 +156,21 @@ func (s *Server) handlePut(w http.ResponseWriter, r *http.Request, path string, 
 }
 
 func (s *Server) handleOptions(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Allow", "GET, HEAD, PUT, PROPFIND, OPTIONS")
+	w.Header().Set("Allow", "GET, HEAD, PUT, DELETE, PROPFIND, OPTIONS")
 	w.Header().Set("DAV", "1")
 	w.WriteHeader(http.StatusOK)
+}
+
+func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request, path string, caller core.CallerIdentity) {
+	if s.opts.ReadOnly {
+		http.Error(w, "read-only filesystem", http.StatusForbidden)
+		return
+	}
+	if err := s.fs.Unmount(path); err != nil {
+		s.writeError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) handlePropfind(w http.ResponseWriter, r *http.Request, p string, caller core.CallerIdentity) {
