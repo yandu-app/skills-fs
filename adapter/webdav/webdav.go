@@ -2,6 +2,7 @@ package webdav
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/xml"
 	"errors"
@@ -54,6 +55,14 @@ func (s *Server) Mount(ctx context.Context) error {
 	ln, err := net.Listen("tcp", s.addr)
 	if err != nil {
 		return err
+	}
+	if s.opts.TLSCertFile != "" && s.opts.TLSKeyFile != "" {
+		cert, err := tls.LoadX509KeyPair(s.opts.TLSCertFile, s.opts.TLSKeyFile)
+		if err != nil {
+			ln.Close()
+			return fmt.Errorf("webdav tls load: %w", err)
+		}
+		ln = tls.NewListener(ln, &tls.Config{Certificates: []tls.Certificate{cert}})
 	}
 	s.ln = ln
 

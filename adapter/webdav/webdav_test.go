@@ -3,11 +3,21 @@ package webdav
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"encoding/xml"
 	"io"
+	"math/big"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
+	"time"
 
 	"github.com/skills-fs/skills-fs/adapter"
 	"github.com/skills-fs/skills-fs/core"
@@ -748,5 +758,68 @@ func TestWebDAVCopyNotFound(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d", resp.StatusCode)
+	}
+}
+
+func writeTempCert(t *testing.T) (certFile, keyFile string) {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	template := x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "localhost"},
+		NotBefore:    time.Now(),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		IPAddresses:  []net.IP{{127, 0, 0, 1}},
+	}
+	certDER, err := x509.CreateCertificate(rand.Reader, &template, &template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	certF, err := os.CreateTemp(t.TempDir(), "*.pem")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pem.Encode(certF, &pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+	certF.Close()
+	keyF, err := os.CreateTemp(t.TempDir(), "*.pem")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pem.Encode(keyF, &pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
+	keyF.Close()
+	return certF.Name(), keyF.Name()
+}
+
+func TestWebDAVTLS(t *testing.T) {
+	certFile, keyFile := writeTempCert(t)
+	fs := core.NewFS(core.GlobalConfig{})
+	if err := fs.Mount("/blob", core.MountEntry{Kind: core.KindBlob, Mode: 0o666, BlobData: []byte("tls-test")}); err != nil {
+		t.Fatal(err)
+	}
+
+	server := New(fs, "127.0.0.1:0", adapter.MountOptions{TLSCertFile: certFile, TLSKeyFile: keyFile})
+	if err := server.Mount(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Unmount(context.Background())
+
+	client := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}}
+	baseURL := "https://" + server.ln.Addr().String()
+	resp, err := client.Get(baseURL + "/blob")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if string(body) != "tls-test" {
+		t.Fatalf("unexpected body: %s", body)
 	}
 }
