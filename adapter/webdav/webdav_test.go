@@ -293,3 +293,159 @@ func TestWebDAVPropfindNotFound(t *testing.T) {
 		t.Fatalf("expected 404, got %d", resp.StatusCode)
 	}
 }
+
+func TestWebDAVBasicAuthUIDMapping(t *testing.T) {
+	server := New(nil, "127.0.0.1:0", adapter.MountOptions{})
+	req, _ := http.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Authorization", "Basic MTAwMDoxMjM0") // base64("1000:1234")
+	caller := server.callerFromRequest(req)
+	if caller.UID != 1000 {
+		t.Fatalf("expected UID 1000, got %d", caller.UID)
+	}
+	if caller.GID != 1000 {
+		t.Fatalf("expected GID 1000, got %d", caller.GID)
+	}
+}
+
+func TestWebDAVReadOnlyRejectsDelete(t *testing.T) {
+	fs := core.NewFS(core.GlobalConfig{})
+	if err := fs.Mount("/blob", core.MountEntry{Kind: core.KindBlob, Mode: 0o444, BlobData: []byte("x")}); err != nil {
+		t.Fatal(err)
+	}
+
+	server := New(fs, "127.0.0.1:0", adapter.MountOptions{ReadOnly: true})
+	if err := server.Mount(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Unmount(context.Background())
+
+	baseURL := "http://" + server.ln.Addr().String()
+	req, _ := http.NewRequest(http.MethodDelete, baseURL+"/blob", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", resp.StatusCode)
+	}
+}
+
+func TestWebDAVDeleteMethodNotAllowed(t *testing.T) {
+	fs := core.NewFS(core.GlobalConfig{})
+	if err := fs.Mount("/blob", core.MountEntry{Kind: core.KindBlob, Mode: 0o644, BlobData: []byte("x")}); err != nil {
+		t.Fatal(err)
+	}
+
+	server := New(fs, "127.0.0.1:0", adapter.MountOptions{})
+	if err := server.Mount(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Unmount(context.Background())
+
+	baseURL := "http://" + server.ln.Addr().String()
+	req, _ := http.NewRequest(http.MethodDelete, baseURL+"/blob", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405, got %d", resp.StatusCode)
+	}
+}
+
+func TestWebDAVPropfindDepthZero(t *testing.T) {
+	fs := core.NewFS(core.GlobalConfig{})
+	if err := fs.Mount("/dir", core.MountEntry{Kind: core.KindDir, Mode: 0o755}); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Mount("/dir/a", core.MountEntry{Kind: core.KindBlob, Mode: 0o644, BlobData: []byte("alpha")}); err != nil {
+		t.Fatal(err)
+	}
+
+	server := New(fs, "127.0.0.1:0", adapter.MountOptions{})
+	if err := server.Mount(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Unmount(context.Background())
+
+	baseURL := "http://" + server.ln.Addr().String()
+	req, _ := http.NewRequest("PROPFIND", baseURL+"/dir", nil)
+	req.Header.Set("Depth", "0")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusMultiStatus {
+		t.Fatalf("PROPFIND status = %d", resp.StatusCode)
+	}
+
+	var ms decodeMultistatus
+	if err := xml.NewDecoder(resp.Body).Decode(&ms); err != nil {
+		t.Fatalf("decode multistatus: %v", err)
+	}
+	if len(ms.Responses) != 1 {
+		t.Fatalf("expected 1 response for Depth:0, got %d", len(ms.Responses))
+	}
+	if ms.Responses[0].Href != "/dir" {
+		t.Fatalf("expected href /dir, got %s", ms.Responses[0].Href)
+	}
+}
+
+func TestWebDAVPropfindEmptyDir(t *testing.T) {
+	fs := core.NewFS(core.GlobalConfig{})
+	if err := fs.Mount("/empty", core.MountEntry{Kind: core.KindDir, Mode: 0o755}); err != nil {
+		t.Fatal(err)
+	}
+
+	server := New(fs, "127.0.0.1:0", adapter.MountOptions{})
+	if err := server.Mount(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Unmount(context.Background())
+
+	baseURL := "http://" + server.ln.Addr().String()
+	req, _ := http.NewRequest("PROPFIND", baseURL+"/empty", nil)
+	req.Header.Set("Depth", "1")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusMultiStatus {
+		t.Fatalf("PROPFIND status = %d", resp.StatusCode)
+	}
+
+	var ms decodeMultistatus
+	if err := xml.NewDecoder(resp.Body).Decode(&ms); err != nil {
+		t.Fatalf("decode multistatus: %v", err)
+	}
+	if len(ms.Responses) != 1 {
+		t.Fatalf("expected 1 response for empty dir, got %d", len(ms.Responses))
+	}
+	if ms.Responses[0].Href != "/empty" {
+		t.Fatalf("expected href /empty, got %s", ms.Responses[0].Href)
+	}
+}
+
+func TestWebDAVPutNotFound(t *testing.T) {
+	fs := core.NewFS(core.GlobalConfig{})
+	server := New(fs, "127.0.0.1:0", adapter.MountOptions{})
+	if err := server.Mount(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Unmount(context.Background())
+
+	baseURL := "http://" + server.ln.Addr().String()
+	req, _ := http.NewRequest(http.MethodPut, baseURL+"/newfile", bytes.NewReader([]byte("data")))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected 404 for PUT to non-existent path, got %d", resp.StatusCode)
+	}
+}
