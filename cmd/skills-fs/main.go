@@ -43,13 +43,29 @@ func usage() {
 	fmt.Fprintf(os.Stderr, "  version  Print version\n")
 }
 
+func buildFS(configPath string) (*core.FileSystem, error) {
+	if configPath == "" {
+		return core.NewFS(core.GlobalConfig{}), nil
+	}
+	cfg, err := LoadConfig(configPath)
+	if err != nil {
+		return nil, fmt.Errorf("load config: %w", err)
+	}
+	return cfg.BuildFS()
+}
+
 func cmdWebDAV(args []string) int {
 	fs := flag.NewFlagSet("webdav", flag.ExitOnError)
 	addr := fs.String("addr", ":8080", "WebDAV listen address")
 	readOnly := fs.Bool("readonly", false, "Read-only mode")
+	configPath := fs.String("config", "", "Path to JSON config file")
 	_ = fs.Parse(args)
 
-	fsys := core.NewFS(core.GlobalConfig{})
+	fsys, err := buildFS(*configPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%v\n", err)
+		return 1
+	}
 	server := webdav.New(fsys, *addr, adapter.MountOptions{ReadOnly: *readOnly})
 	if err := server.Mount(context.Background()); err != nil {
 		fmt.Fprintf(os.Stderr, "mount: %v\n", err)
@@ -74,9 +90,14 @@ func cmdFUSE(args []string) int {
 	fs := flag.NewFlagSet("fuse", flag.ExitOnError)
 	mountpoint := fs.String("mountpoint", "/mnt/skills", "FUSE mount point")
 	allowOther := fs.Bool("allow-other", false, "Allow other users to access the mount")
+	configPath := fs.String("config", "", "Path to JSON config file")
 	_ = fs.Parse(args)
 
-	fsys := core.NewFS(core.GlobalConfig{})
+	fsys, err := buildFS(*configPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%v\n", err)
+		return 1
+	}
 	server := fuse.New(fsys, *mountpoint, adapter.MountOptions{AllowOther: *allowOther})
 	if err := server.Mount(context.Background()); err != nil {
 		fmt.Fprintf(os.Stderr, "mount: %v\n", err)
