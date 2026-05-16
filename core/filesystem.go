@@ -68,8 +68,9 @@ func (fs *FileSystem) RegisterProvider(p Provider) error {
 	return nil
 }
 
-func (fs *FileSystem) RegisterNotifier(fn func(Event)) {
-	fs.events.register(fn)
+func (fs *FileSystem) RegisterNotifier(fn func(Event), prefix string) func() {
+	id := fs.events.register(fn, prefix)
+	return func() { fs.events.unregister(id) }
 }
 
 func (fs *FileSystem) Mount(path string, entry MountEntry) error {
