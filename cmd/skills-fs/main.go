@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -43,6 +44,59 @@ func usage() {
 	fmt.Fprintf(os.Stderr, "  version  Print version\n")
 }
 
+func setupLogger(level string, logFile string) *slog.Logger {
+	var lw *os.File = os.Stderr
+	if logFile != "" {
+		f, err := os.OpenFile(logFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if err == nil {
+			lw = f
+		}
+	}
+	var sl slog.Level
+	switch level {
+	case "debug":
+		sl = slog.LevelDebug
+	case "warn":
+		sl = slog.LevelWarn
+	case "error":
+		sl = slog.LevelError
+	default:
+		sl = slog.LevelInfo
+	}
+	h := slog.NewJSONHandler(lw, &slog.HandlerOptions{Level: sl})
+	return slog.New(h)
+}
+
+func maybeDaemonize(daemon bool, pidfile string) bool {
+	if !daemon {
+		if pidfile != "" {
+			os.WriteFile(pidfile, []byte(fmt.Sprintf("%d\n", os.Getpid())), 0644)
+		}
+		return false
+	}
+	// Re-execute the same binary without -daemon, detached from terminal.
+	args := make([]string, 0, len(os.Args))
+	for _, a := range os.Args {
+		if a == "-daemon" || a == "--daemon" {
+			continue
+		}
+		args = append(args, a)
+	}
+	cmd, err := os.StartProcess(args[0], args, &os.ProcAttr{
+		Files: []*os.File{nil, nil, nil},
+		Sys:   &syscall.SysProcAttr{Setsid: true},
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "daemonize: %v\n", err)
+		os.Exit(1)
+	}
+	if pidfile != "" {
+		os.WriteFile(pidfile, []byte(fmt.Sprintf("%d\n", cmd.Pid)), 0644)
+	}
+	fmt.Printf("daemon started pid=%d\n", cmd.Pid)
+	return true
+}
+
 func buildFS(configPath string) (*core.FileSystem, error) {
 	if configPath == "" {
 		return core.NewFS(core.GlobalConfig{}), nil
@@ -59,27 +113,38 @@ func cmdWebDAV(args []string) int {
 	addr := fs.String("addr", ":8080", "WebDAV listen address")
 	readOnly := fs.Bool("readonly", false, "Read-only mode")
 	configPath := fs.String("config", "", "Path to JSON config file")
+	logLevel := fs.String("log-level", "info", "Log level (debug, info, warn, error)")
+	logFile := fs.String("log-file", "", "Path to log file")
+	daemon := fs.Bool("daemon", false, "Run as background daemon")
+	pidfile := fs.String("pidfile", "", "Path to PID file")
 	_ = fs.Parse(args)
+
+	if maybeDaemonize(*daemon, *pidfile) {
+		return 0
+	}
+
+	logger := setupLogger(*logLevel, *logFile)
+	slog.SetDefault(logger)
 
 	fsys, err := buildFS(*configPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "%v\n", err)
+		slog.Error("build fs", "err", err)
 		return 1
 	}
 	server := webdav.New(fsys, *addr, adapter.MountOptions{ReadOnly: *readOnly})
 	if err := server.Mount(context.Background()); err != nil {
-		fmt.Fprintf(os.Stderr, "mount: %v\n", err)
+		slog.Error("mount", "err", err)
 		return 1
 	}
-	fmt.Printf("WebDAV listening on %s\n", server.MountPoint())
+	slog.Info("webdav listening", "addr", server.MountPoint())
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	<-sigCh
 
-	fmt.Println("Shutting down...")
+	slog.Info("shutting down")
 	if err := server.Unmount(context.Background()); err != nil {
-		fmt.Fprintf(os.Stderr, "unmount: %v\n", err)
+		slog.Error("unmount", "err", err)
 		return 1
 	}
 	fsys.Shutdown(context.Background())
@@ -91,27 +156,38 @@ func cmdFUSE(args []string) int {
 	mountpoint := fs.String("mountpoint", "/mnt/skills", "FUSE mount point")
 	allowOther := fs.Bool("allow-other", false, "Allow other users to access the mount")
 	configPath := fs.String("config", "", "Path to JSON config file")
+	logLevel := fs.String("log-level", "info", "Log level (debug, info, warn, error)")
+	logFile := fs.String("log-file", "", "Path to log file")
+	daemon := fs.Bool("daemon", false, "Run as background daemon")
+	pidfile := fs.String("pidfile", "", "Path to PID file")
 	_ = fs.Parse(args)
+
+	if maybeDaemonize(*daemon, *pidfile) {
+		return 0
+	}
+
+	logger := setupLogger(*logLevel, *logFile)
+	slog.SetDefault(logger)
 
 	fsys, err := buildFS(*configPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "%v\n", err)
+		slog.Error("build fs", "err", err)
 		return 1
 	}
 	server := fuse.New(fsys, *mountpoint, adapter.MountOptions{AllowOther: *allowOther})
 	if err := server.Mount(context.Background()); err != nil {
-		fmt.Fprintf(os.Stderr, "mount: %v\n", err)
+		slog.Error("mount", "err", err)
 		return 1
 	}
-	fmt.Printf("FUSE mounted at %s\n", server.MountPoint())
+	slog.Info("fuse mounted", "path", server.MountPoint())
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	<-sigCh
 
-	fmt.Println("Shutting down...")
+	slog.Info("shutting down")
 	if err := server.Unmount(context.Background()); err != nil {
-		fmt.Fprintf(os.Stderr, "unmount: %v\n", err)
+		slog.Error("unmount", "err", err)
 		return 1
 	}
 	fsys.Shutdown(context.Background())
