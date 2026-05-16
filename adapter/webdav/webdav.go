@@ -80,7 +80,7 @@ func (s *Server) Unmount(ctx context.Context) error {
 func (s *Server) handleWebDAV(w http.ResponseWriter, r *http.Request) {
 	if s.opts.ReadOnly {
 		switch r.Method {
-		case http.MethodPut, http.MethodDelete, http.MethodPatch, http.MethodPost:
+		case http.MethodPut, http.MethodDelete, http.MethodPatch, http.MethodPost, "MKCOL":
 			http.Error(w, "read-only filesystem", http.StatusForbidden)
 			return
 		}
@@ -101,12 +101,14 @@ func (s *Server) handleWebDAV(w http.ResponseWriter, r *http.Request) {
 		s.handlePut(w, r, path, caller)
 	case http.MethodDelete:
 		s.handleDelete(w, r, path, caller)
+	case "MKCOL":
+		s.handleMkcol(w, r, path, caller)
 	case "PROPFIND":
 		s.handlePropfind(w, r, path, caller)
 	case http.MethodOptions:
 		s.handleOptions(w, r)
 	default:
-		w.Header().Set("Allow", "GET, HEAD, PUT, DELETE, PROPFIND, OPTIONS")
+		w.Header().Set("Allow", "GET, HEAD, PUT, DELETE, MKCOL, PROPFIND, OPTIONS")
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
 }
@@ -156,9 +158,21 @@ func (s *Server) handlePut(w http.ResponseWriter, r *http.Request, path string, 
 }
 
 func (s *Server) handleOptions(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Allow", "GET, HEAD, PUT, DELETE, PROPFIND, OPTIONS")
+	w.Header().Set("Allow", "GET, HEAD, PUT, DELETE, MKCOL, PROPFIND, OPTIONS")
 	w.Header().Set("DAV", "1")
 	w.WriteHeader(http.StatusOK)
+}
+
+func (s *Server) handleMkcol(w http.ResponseWriter, r *http.Request, path string, caller core.CallerIdentity) {
+	if s.opts.ReadOnly {
+		http.Error(w, "read-only filesystem", http.StatusForbidden)
+		return
+	}
+	if err := s.fs.Mount(path, core.MountEntry{Kind: core.KindDir, Mode: 0o755, UID: caller.UID, GID: caller.GID}); err != nil {
+		s.writeError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusCreated)
 }
 
 func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request, path string, caller core.CallerIdentity) {
