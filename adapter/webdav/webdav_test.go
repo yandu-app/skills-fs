@@ -625,3 +625,128 @@ func TestWebDAVMkcolReadOnly(t *testing.T) {
 		t.Fatalf("expected 403, got %d", resp.StatusCode)
 	}
 }
+
+func TestWebDAVCopyBlob(t *testing.T) {
+	fs := core.NewFS(core.GlobalConfig{})
+	if err := fs.Mount("/src", core.MountEntry{Kind: core.KindBlob, Mode: 0o644, BlobData: []byte("hello")}); err != nil {
+		t.Fatal(err)
+	}
+
+	server := New(fs, "127.0.0.1:0", adapter.MountOptions{})
+	if err := server.Mount(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Unmount(context.Background())
+
+	baseURL := "http://" + server.ln.Addr().String()
+	req, _ := http.NewRequest("COPY", baseURL+"/src", nil)
+	req.Header.Set("Destination", baseURL+"/dst")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", resp.StatusCode)
+	}
+
+	data, err := fs.Read(context.Background(), "/dst", core.CallerIdentity{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "hello" {
+		t.Fatalf("copy data = %q", data)
+	}
+}
+
+func TestWebDAVCopyDir(t *testing.T) {
+	fs := core.NewFS(core.GlobalConfig{})
+	if err := fs.Mount("/src", core.MountEntry{Kind: core.KindDir, Mode: 0o755}); err != nil {
+		t.Fatal(err)
+	}
+
+	server := New(fs, "127.0.0.1:0", adapter.MountOptions{})
+	if err := server.Mount(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Unmount(context.Background())
+
+	baseURL := "http://" + server.ln.Addr().String()
+	req, _ := http.NewRequest("COPY", baseURL+"/src", nil)
+	req.Header.Set("Destination", baseURL+"/dst")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", resp.StatusCode)
+	}
+
+	stat, err := fs.Stat("/dst", core.CallerIdentity{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stat.Kind != core.KindDir {
+		t.Fatalf("expected dir, got %s", stat.Kind)
+	}
+}
+
+func TestWebDAVMove(t *testing.T) {
+	fs := core.NewFS(core.GlobalConfig{})
+	if err := fs.Mount("/src", core.MountEntry{Kind: core.KindBlob, Mode: 0o644, BlobData: []byte("world")}); err != nil {
+		t.Fatal(err)
+	}
+
+	server := New(fs, "127.0.0.1:0", adapter.MountOptions{})
+	if err := server.Mount(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Unmount(context.Background())
+
+	baseURL := "http://" + server.ln.Addr().String()
+	req, _ := http.NewRequest("MOVE", baseURL+"/src", nil)
+	req.Header.Set("Destination", baseURL+"/dst")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", resp.StatusCode)
+	}
+
+	data, err := fs.Read(context.Background(), "/dst", core.CallerIdentity{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "world" {
+		t.Fatalf("move data = %q", data)
+	}
+
+	_, err = fs.Stat("/src", core.CallerIdentity{})
+	if err == nil {
+		t.Fatal("expected src to be gone after move")
+	}
+}
+
+func TestWebDAVCopyNotFound(t *testing.T) {
+	fs := core.NewFS(core.GlobalConfig{})
+	server := New(fs, "127.0.0.1:0", adapter.MountOptions{})
+	if err := server.Mount(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Unmount(context.Background())
+
+	baseURL := "http://" + server.ln.Addr().String()
+	req, _ := http.NewRequest("COPY", baseURL+"/missing", nil)
+	req.Header.Set("Destination", baseURL+"/dst")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", resp.StatusCode)
+	}
+}

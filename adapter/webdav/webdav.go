@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"path"
 	"strings"
 	"time"
@@ -80,7 +81,7 @@ func (s *Server) Unmount(ctx context.Context) error {
 func (s *Server) handleWebDAV(w http.ResponseWriter, r *http.Request) {
 	if s.opts.ReadOnly {
 		switch r.Method {
-		case http.MethodPut, http.MethodDelete, http.MethodPatch, http.MethodPost, "MKCOL":
+		case http.MethodPut, http.MethodDelete, http.MethodPatch, http.MethodPost, "MKCOL", "COPY", "MOVE":
 			http.Error(w, "read-only filesystem", http.StatusForbidden)
 			return
 		}
@@ -103,12 +104,16 @@ func (s *Server) handleWebDAV(w http.ResponseWriter, r *http.Request) {
 		s.handleDelete(w, r, path, caller)
 	case "MKCOL":
 		s.handleMkcol(w, r, path, caller)
+	case "COPY":
+		s.handleCopy(w, r, path, caller)
+	case "MOVE":
+		s.handleMove(w, r, path, caller)
 	case "PROPFIND":
 		s.handlePropfind(w, r, path, caller)
 	case http.MethodOptions:
 		s.handleOptions(w, r)
 	default:
-		w.Header().Set("Allow", "GET, HEAD, PUT, DELETE, MKCOL, PROPFIND, OPTIONS")
+		w.Header().Set("Allow", "GET, HEAD, PUT, DELETE, MKCOL, COPY, MOVE, PROPFIND, OPTIONS")
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
 }
@@ -158,7 +163,7 @@ func (s *Server) handlePut(w http.ResponseWriter, r *http.Request, path string, 
 }
 
 func (s *Server) handleOptions(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Allow", "GET, HEAD, PUT, DELETE, MKCOL, PROPFIND, OPTIONS")
+	w.Header().Set("Allow", "GET, HEAD, PUT, DELETE, MKCOL, COPY, MOVE, PROPFIND, OPTIONS")
 	w.Header().Set("DAV", "1")
 	w.WriteHeader(http.StatusOK)
 }
@@ -173,6 +178,85 @@ func (s *Server) handleMkcol(w http.ResponseWriter, r *http.Request, path string
 		return
 	}
 	w.WriteHeader(http.StatusCreated)
+}
+
+func (s *Server) handleCopy(w http.ResponseWriter, r *http.Request, src string, caller core.CallerIdentity) {
+	if s.opts.ReadOnly {
+		http.Error(w, "read-only filesystem", http.StatusForbidden)
+		return
+	}
+	dst, err := s.destinationPath(r)
+	if err != nil {
+		http.Error(w, "bad destination", http.StatusBadRequest)
+		return
+	}
+	if err := s.copyResource(src, dst, caller); err != nil {
+		s.writeError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleMove(w http.ResponseWriter, r *http.Request, src string, caller core.CallerIdentity) {
+	if s.opts.ReadOnly {
+		http.Error(w, "read-only filesystem", http.StatusForbidden)
+		return
+	}
+	dst, err := s.destinationPath(r)
+	if err != nil {
+		http.Error(w, "bad destination", http.StatusBadRequest)
+		return
+	}
+	if err := s.copyResource(src, dst, caller); err != nil {
+		s.writeError(w, err)
+		return
+	}
+	if err := s.fs.Unmount(src); err != nil {
+		s.writeError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) destinationPath(r *http.Request) (string, error) {
+	dst := r.Header.Get("Destination")
+	if dst == "" {
+		return "", fmt.Errorf("missing Destination header")
+	}
+	u, err := url.Parse(dst)
+	if err != nil {
+		return "", err
+	}
+	p := u.Path
+	if p == "" {
+		p = "/"
+	}
+	return p, nil
+}
+
+func (s *Server) copyResource(src, dst string, caller core.CallerIdentity) error {
+	stat, err := s.fs.Stat(src, caller)
+	if err != nil {
+		return err
+	}
+	switch stat.Kind {
+	case core.KindBlob:
+		data, err := s.fs.Read(context.Background(), src, caller)
+		if err != nil {
+			return err
+		}
+		return s.fs.Mount(dst, core.MountEntry{Kind: core.KindBlob, Mode: stat.Mode, UID: stat.UID, GID: stat.GID, BlobData: data})
+	case core.KindDir:
+		return s.fs.Mount(dst, core.MountEntry{Kind: core.KindDir, Mode: stat.Mode, UID: stat.UID, GID: stat.GID})
+	case core.KindLink:
+		data, err := s.fs.Read(context.Background(), src, caller)
+		if err != nil {
+			return err
+		}
+		return s.fs.Mount(dst, core.MountEntry{Kind: core.KindLink, Mode: stat.Mode, UID: stat.UID, GID: stat.GID, LinkPath: string(data)})
+	default:
+		return &core.PosixError{Code: core.EINVAL, Op: core.OpCode("copy")}
+	}
 }
 
 func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request, path string, caller core.CallerIdentity) {
