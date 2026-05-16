@@ -3,11 +3,13 @@ package webdav
 import (
 	"context"
 	"encoding/base64"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"path"
 	"strings"
 	"time"
 
@@ -97,10 +99,12 @@ func (s *Server) handleWebDAV(w http.ResponseWriter, r *http.Request) {
 		s.handleHead(w, r, path, caller)
 	case http.MethodPut:
 		s.handlePut(w, r, path, caller)
+	case "PROPFIND":
+		s.handlePropfind(w, r, path, caller)
 	case http.MethodOptions:
 		s.handleOptions(w, r)
 	default:
-		w.Header().Set("Allow", "GET, HEAD, PUT, OPTIONS")
+		w.Header().Set("Allow", "GET, HEAD, PUT, PROPFIND, OPTIONS")
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
 }
@@ -150,9 +154,106 @@ func (s *Server) handlePut(w http.ResponseWriter, r *http.Request, path string, 
 }
 
 func (s *Server) handleOptions(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Allow", "GET, HEAD, PUT, OPTIONS")
+	w.Header().Set("Allow", "GET, HEAD, PUT, PROPFIND, OPTIONS")
 	w.Header().Set("DAV", "1")
 	w.WriteHeader(http.StatusOK)
+}
+
+func (s *Server) handlePropfind(w http.ResponseWriter, r *http.Request, p string, caller core.CallerIdentity) {
+	depth := r.Header.Get("Depth")
+	if depth == "" {
+		depth = "infinity"
+	}
+
+	entries, err := s.buildPropfindEntries(p, depth, caller)
+	if err != nil {
+		s.writeError(w, err)
+		return
+	}
+
+	ms := multistatus{XmlnsD: "DAV:", Responses: entries}
+	w.Header().Set("Content-Type", "text/xml; charset=utf-8")
+	w.WriteHeader(http.StatusMultiStatus)
+	xml.NewEncoder(w).Encode(ms)
+}
+
+func (s *Server) buildPropfindEntries(p string, depth string, caller core.CallerIdentity) ([]response, error) {
+	stat, err := s.fs.Stat(p, caller)
+	if err != nil {
+		return nil, err
+	}
+
+	var entries []response
+	entries = append(entries, s.propfindResponse(p, stat))
+
+	if depth != "0" && stat.Kind == core.KindDir {
+		children, err := s.fs.Readdir(p, caller)
+		if err != nil {
+			return nil, err
+		}
+		for _, child := range children {
+			childPath := path.Join(p, child.Name)
+			if childPath == "" {
+				childPath = "/" + child.Name
+			}
+			childStat, err := s.fs.Stat(childPath, caller)
+			if err != nil {
+				continue
+			}
+			entries = append(entries, s.propfindResponse(childPath, childStat))
+		}
+	}
+
+	return entries, nil
+}
+
+func (s *Server) propfindResponse(p string, stat core.Stat) response {
+	var rt *resourceType
+	if stat.Kind == core.KindDir {
+		rt = &resourceType{Collection: ""}
+	}
+	return response{
+		Href: p,
+		Propstat: propstat{
+			Prop: prop{
+				DisplayName:      path.Base(p),
+				GetContentLength: stat.Size,
+				ResourceType:     rt,
+			},
+			Status: "HTTP/1.1 200 OK",
+		},
+	}
+}
+
+// WebDAV XML structures.
+type multistatus struct {
+	XMLName   xml.Name   `xml:"D:multistatus"`
+	XmlnsD    string     `xml:"xmlns:D,attr"`
+	Responses []response `xml:"D:response"`
+}
+
+type response struct {
+	XMLName  xml.Name `xml:"D:response"`
+	Href     string   `xml:"D:href"`
+	Propstat propstat `xml:"D:propstat"`
+}
+
+type propstat struct {
+	XMLName xml.Name `xml:"D:propstat"`
+	Prop    prop     `xml:"D:prop"`
+	Status  string   `xml:"D:status"`
+}
+
+type prop struct {
+	XMLName          xml.Name     `xml:"D:prop"`
+	DisplayName      string       `xml:"D:displayname"`
+	GetContentLength int64        `xml:"D:getcontentlength"`
+	ResourceType     *resourceType `xml:"D:resourcetype"`
+}
+
+type resourceType struct {
+	XMLName    xml.Name `xml:"D:resourcetype"`
+	Collection string   `xml:"D:collection,omitempty"`
 }
 
 func (s *Server) callerFromRequest(r *http.Request) core.CallerIdentity {
