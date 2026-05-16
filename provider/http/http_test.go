@@ -70,6 +70,14 @@ func TestHTTPProviderID(t *testing.T) {
 	}
 }
 
+func TestHTTPProviderConnectionError(t *testing.T) {
+	p := NewProvider("remote", "http://127.0.0.1:1")
+	_, err := p.Invoke(context.Background(), "x", nil)
+	if err == nil {
+		t.Fatal("expected error for connection refused")
+	}
+}
+
 func TestHTTPProviderIntegrationWithFS(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
