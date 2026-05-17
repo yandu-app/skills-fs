@@ -491,6 +491,27 @@ func (s *Server) handleProppatch(w http.ResponseWriter, r *http.Request, p strin
 }
 
 func (s *Server) buildPropfindEntries(ctx context.Context, p string, depth string, caller core.CallerIdentity) ([]response, error) {
+	maxDepth := s.opts.MaxPropfindDepth
+	if maxDepth == 0 {
+		maxDepth = 3
+	}
+
+	switch depth {
+	case "0":
+		return s.propfindRecursive(ctx, p, 0, 0, caller)
+	case "1":
+		return s.propfindRecursive(ctx, p, 0, 1, caller)
+	case "infinity":
+		if maxDepth < 0 {
+			return s.propfindRecursive(ctx, p, 0, -1, caller)
+		}
+		return s.propfindRecursive(ctx, p, 0, maxDepth, caller)
+	default:
+		return s.propfindRecursive(ctx, p, 0, 0, caller)
+	}
+}
+
+func (s *Server) propfindRecursive(ctx context.Context, p string, currentDepth, maxDepth int, caller core.CallerIdentity) ([]response, error) {
 	stat, err := s.fs.Stat(p, caller)
 	if err != nil {
 		return nil, err
@@ -500,25 +521,28 @@ func (s *Server) buildPropfindEntries(ctx context.Context, p string, depth strin
 	var entries []response
 	entries = append(entries, s.propfindResponse(p, stat, data))
 
-	if depth != "0" && stat.Kind == core.KindDir {
-		children, err := s.fs.Readdir(p, caller)
-		if err != nil {
-			return nil, err
-		}
-		for _, child := range children {
-			childPath := path.Join(p, child.Name)
-			if childPath == "" {
-				childPath = "/" + child.Name
-			}
-			childStat, err := s.fs.Stat(childPath, caller)
-			if err != nil {
-				continue
-			}
-			childData, _ := s.fs.Read(ctx, childPath, caller)
-			entries = append(entries, s.propfindResponse(childPath, childStat, childData))
-		}
+	if maxDepth >= 0 && currentDepth >= maxDepth {
+		return entries, nil
+	}
+	if stat.Kind != core.KindDir {
+		return entries, nil
 	}
 
+	children, err := s.fs.Readdir(p, caller)
+	if err != nil {
+		return nil, err
+	}
+	for _, child := range children {
+		childPath := path.Join(p, child.Name)
+		if childPath == "" {
+			childPath = "/" + child.Name
+		}
+		childEntries, err := s.propfindRecursive(ctx, childPath, currentDepth+1, maxDepth, caller)
+		if err != nil {
+			continue
+		}
+		entries = append(entries, childEntries...)
+	}
 	return entries, nil
 }
 
