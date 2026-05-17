@@ -97,9 +97,10 @@ func (s *Server) handleWebDAV(w http.ResponseWriter, r *http.Request) {
 	}
 
 	caller := s.callerFromRequest(r)
-	path := r.URL.Path
+	path := sanitizePath(r.URL.Path)
 	if path == "" {
-		path = "/"
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
 	}
 
 	switch r.Method {
@@ -446,4 +447,20 @@ func contentTypeFromKind(kind core.NodeKind) string {
 	default:
 		return "application/octet-stream"
 	}
+}
+
+func sanitizePath(p string) string {
+	if p == "" || p == "/" {
+		return "/"
+	}
+	if p[0] != '/' {
+		return ""
+	}
+	// Reject paths containing traversal or empty segments.
+	for _, seg := range strings.Split(p[1:], "/") {
+		if seg == "" || seg == "." || seg == ".." {
+			return ""
+		}
+	}
+	return p
 }

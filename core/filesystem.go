@@ -10,6 +10,28 @@ import (
 	"time"
 )
 
+// normalizePath validates and canonicalizes a path. It rejects empty
+// segments, ".", "..", and paths that do not start with "/".
+func normalizePath(p string) (string, error) {
+	if p == "" || p[0] != '/' {
+		return "", posix(EINVAL, OpStat, p, nil)
+	}
+	if p == "/" {
+		return p, nil
+	}
+	// Reject trailing slash (except root) to keep paths canonical.
+	if strings.HasSuffix(p, "/") {
+		return "", posix(EINVAL, OpStat, p, nil)
+	}
+	raw := strings.Split(p[1:], "/")
+	for _, seg := range raw {
+		if seg == "" || seg == "." || seg == ".." {
+			return "", posix(EINVAL, OpStat, p, nil)
+		}
+	}
+	return p, nil
+}
+
 type FileSystem struct {
 	cfg       GlobalConfig
 	router    *router
@@ -75,7 +97,11 @@ func (fs *FileSystem) RegisterNotifier(fn func(Event), prefix string) func() {
 	return func() { fs.events.unregister(id) }
 }
 
-func (fs *FileSystem) Mount(path string, entry MountEntry) error {
+func (fs *FileSystem) Mount(p string, entry MountEntry) error {
+	path, err := normalizePath(p)
+	if err != nil {
+		return err
+	}
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
 	if len(fs.providers) == 0 && hasProviderOps(entry.Ops) {
@@ -119,7 +145,11 @@ func (fs *FileSystem) Mount(path string, entry MountEntry) error {
 	return nil
 }
 
-func (fs *FileSystem) Unmount(path string) error {
+func (fs *FileSystem) Unmount(p string) error {
+	path, err := normalizePath(p)
+	if err != nil {
+		return err
+	}
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
 	m, err := fs.router.remove(path)
@@ -145,6 +175,14 @@ func (fs *FileSystem) Remove(path string) error {
 // Rename moves a mount from oldPath to newPath, preserving its properties.
 // It returns an error if oldPath does not exist or newPath is already mounted.
 func (fs *FileSystem) Rename(oldPath, newPath string) error {
+	oldPath, err := normalizePath(oldPath)
+	if err != nil {
+		return err
+	}
+	newPath, err = normalizePath(newPath)
+	if err != nil {
+		return err
+	}
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
 	m, err := fs.router.remove(oldPath)
