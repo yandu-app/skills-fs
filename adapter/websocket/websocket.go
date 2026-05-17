@@ -1,0 +1,134 @@
+package websocket
+
+import (
+	"context"
+	"fmt"
+	"net"
+	"net/http"
+
+	"golang.org/x/net/websocket"
+	"github.com/skills-fs/skills-fs/adapter"
+	"github.com/skills-fs/skills-fs/core"
+)
+
+// Server streams filesystem operations over WebSocket.
+type Server struct {
+	fs   *core.FileSystem
+	addr string
+	opts adapter.MountOptions
+	srv  *http.Server
+	ln   net.Listener
+}
+
+func New(fs *core.FileSystem, addr string, opts adapter.MountOptions) *Server {
+	return &Server{fs: fs, addr: addr, opts: opts}
+}
+
+func (s *Server) MountPoint() string { return s.addr }
+func (s *Server) FileSystem() *core.FileSystem { return s.fs }
+func (s *Server) Options() adapter.MountOptions { return s.opts }
+
+func (s *Server) Mount(ctx context.Context) error {
+	mux := http.NewServeMux()
+	mux.Handle("/", websocket.Handler(s.handleWS))
+
+	s.srv = &http.Server{Addr: s.addr, Handler: mux}
+	ln, err := net.Listen("tcp", s.addr)
+	if err != nil {
+		return err
+	}
+	s.ln = ln
+	go s.srv.Serve(ln)
+	return nil
+}
+
+func (s *Server) Unmount(ctx context.Context) error {
+	if s.srv == nil {
+		return nil
+	}
+	return s.srv.Shutdown(ctx)
+}
+
+type wsMsg struct {
+	Op     string          `json:"op"`
+	Path   string          `json:"path"`
+	Data   string          `json:"data,omitempty"`
+	Prefix string          `json:"prefix,omitempty"`
+}
+
+type wsReply struct {
+	Op    string `json:"op"`
+	Path  string `json:"path,omitempty"`
+	Data  string `json:"data,omitempty"`
+	Error string `json:"error,omitempty"`
+	Event *evt   `json:"event,omitempty"`
+}
+
+type evt struct {
+	Path string `json:"path"`
+	Kind string `json:"kind"`
+}
+
+func (s *Server) handleWS(conn *websocket.Conn) {
+	defer conn.Close()
+	var unsub func()
+	defer func() {
+		if unsub != nil {
+			unsub()
+		}
+	}()
+
+	for {
+		var msg wsMsg
+		if err := websocket.JSON.Receive(conn, &msg); err != nil {
+			return
+		}
+		reply := wsReply{Op: msg.Op, Path: msg.Path}
+		switch msg.Op {
+		case "read":
+			data, err := s.fs.Read(context.Background(), msg.Path, core.CallerIdentity{})
+			if err != nil {
+				reply.Error = err.Error()
+			} else {
+				reply.Data = string(data)
+			}
+		case "write":
+			if s.opts.ReadOnly {
+				reply.Error = "read-only filesystem"
+				break
+			}
+			if err := s.fs.Write(context.Background(), msg.Path, []byte(msg.Data), core.CallerIdentity{}); err != nil {
+				reply.Error = err.Error()
+			}
+		case "subscribe":
+			if unsub != nil {
+				unsub()
+			}
+			ch := make(chan core.Event, 16)
+			unsub = s.fs.RegisterNotifier(func(e core.Event) {
+				select {
+				case ch <- e:
+				default:
+				}
+			}, msg.Prefix)
+			go func() {
+				for e := range ch {
+					websocket.JSON.Send(conn, wsReply{
+						Op: "event",
+						Event: &evt{Path: e.Path, Kind: fmt.Sprint(e.Kind)},
+					})
+				}
+			}()
+		case "unsubscribe":
+			if unsub != nil {
+				unsub()
+				unsub = nil
+			}
+		default:
+			reply.Error = "unknown op"
+		}
+		if err := websocket.JSON.Send(conn, reply); err != nil {
+			return
+		}
+	}
+}
