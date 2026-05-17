@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path"
 	"sort"
 	"strings"
@@ -123,6 +124,9 @@ func (fs *FileSystem) Mount(p string, entry MountEntry) error {
 		return err
 	}
 	if isReservedPath(path) {
+		return posix(EINVAL, OpStat, path, nil)
+	}
+	if err := validateMountEntry(&entry); err != nil {
 		return posix(EINVAL, OpStat, path, nil)
 	}
 	fs.mu.Lock()
@@ -580,6 +584,31 @@ func invokeProvider(ctx context.Context, provider Provider, cap *CapConfig, op O
 
 func hasProviderOps(ops map[OpCode]*CapConfig) bool {
 	return len(ops) > 0
+}
+
+func validateMountEntry(entry *MountEntry) error {
+	switch entry.Kind {
+	case KindBlob, KindAPI, KindStream, KindDir, KindLink:
+		// valid
+	default:
+		return fmt.Errorf("invalid kind %q", entry.Kind)
+	}
+	if len(entry.BlobData) > 0 && entry.Kind != KindBlob {
+		return fmt.Errorf("BlobData set for non-blob kind %q", entry.Kind)
+	}
+	if entry.LinkPath != "" && entry.Kind != KindLink {
+		return fmt.Errorf("LinkPath set for non-link kind %q", entry.Kind)
+	}
+	if entry.Stream != nil && entry.Kind != KindStream {
+		return fmt.Errorf("Stream config set for non-stream kind %q", entry.Kind)
+	}
+	if entry.Skill != nil && entry.Skill.Enabled && entry.Skill.Name == "" {
+		return fmt.Errorf("enabled skill requires Name")
+	}
+	if entry.Visibility != "" && entry.Visibility != "public" && entry.Visibility != "private" {
+		return fmt.Errorf("invalid visibility %q", entry.Visibility)
+	}
+	return nil
 }
 
 func skillDirPath(path string) (string, bool) {
