@@ -49,3 +49,14 @@ func TestWebSocketCommandHelp(t *testing.T) {
 		t.Fatalf("expected help error, got %v", err)
 	}
 }
+
+func TestHealthCommandFlagParsing(t *testing.T) {
+	fs := flag.NewFlagSet("health", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	fs.String("addr", "http://localhost:8080", "")
+	fs.String("path", "/healthz", "")
+	fs.Duration("timeout", 5*time.Second, "")
+	if err := fs.Parse([]string{"-h"}); err != flag.ErrHelp {
+		t.Fatalf("expected help error, got %v", err)
+	}
+}

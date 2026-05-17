@@ -24,12 +24,12 @@ profile.cov
 go.work
 go.work.sum
 
-# Project-specific build artifacts
-skills-fs
-webdav-server
-websocket-events
-websocket-reconnect
-basic
+# Project-specific build artifacts (anchored to root)
+/skills-fs
+/webdav-server
+/websocket-events
+/websocket-reconnect
+/basic
 
 # env file
 .env
