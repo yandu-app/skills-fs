@@ -1775,3 +1775,37 @@ func TestProviderCacheDisabled(t *testing.T) {
 		t.Fatalf("expected 3 provider calls without cache, got %d", p.callCount)
 	}
 }
+
+func TestMountEntryEqual(t *testing.T) {
+	base := MountEntry{Kind: KindBlob, Mode: 0o644, UID: 1, GID: 2, BlobData: []byte("x")}
+	cases := []struct {
+		name string
+		a, b MountEntry
+		want bool
+	}{
+		{"identical", base, base, true},
+		{"different kind", base, MountEntry{Kind: KindDir, Mode: 0o644, UID: 1, GID: 2, BlobData: []byte("x")}, false},
+		{"different mode", base, MountEntry{Kind: KindBlob, Mode: 0o755, UID: 1, GID: 2, BlobData: []byte("x")}, false},
+		{"different uid", base, MountEntry{Kind: KindBlob, Mode: 0o644, UID: 99, GID: 2, BlobData: []byte("x")}, false},
+		{"different gid", base, MountEntry{Kind: KindBlob, Mode: 0o644, UID: 1, GID: 99, BlobData: []byte("x")}, false},
+		{"different link", MountEntry{Kind: KindLink, LinkPath: "/a"}, MountEntry{Kind: KindLink, LinkPath: "/b"}, false},
+		{"different visibility", MountEntry{Kind: KindBlob, Visibility: "public"}, MountEntry{Kind: KindBlob, Visibility: "private"}, false},
+		{"different blob", base, MountEntry{Kind: KindBlob, Mode: 0o644, UID: 1, GID: 2, BlobData: []byte("y")}, false},
+		{"stream nil vs set", MountEntry{Kind: KindStream, Stream: nil}, MountEntry{Kind: KindStream, Stream: &StreamConfig{Capacity: 1}}, false},
+		{"stream capacity", MountEntry{Kind: KindStream, Stream: &StreamConfig{Capacity: 1}}, MountEntry{Kind: KindStream, Stream: &StreamConfig{Capacity: 2}}, false},
+		{"stream mode", MountEntry{Kind: KindStream, Stream: &StreamConfig{Capacity: 1, Mode: BackpressureBlock}}, MountEntry{Kind: KindStream, Stream: &StreamConfig{Capacity: 1, Mode: BackpressureDrop}}, false},
+		{"skill nil vs set", MountEntry{Kind: KindBlob, Skill: nil}, MountEntry{Kind: KindBlob, Skill: &SkillConfig{Name: "x"}}, false},
+		{"skill name", MountEntry{Kind: KindBlob, Skill: &SkillConfig{Name: "a"}}, MountEntry{Kind: KindBlob, Skill: &SkillConfig{Name: "b"}}, false},
+		{"skill enabled", MountEntry{Kind: KindBlob, Skill: &SkillConfig{Name: "a", Enabled: true}}, MountEntry{Kind: KindBlob, Skill: &SkillConfig{Name: "a", Enabled: false}}, false},
+		{"same stream", MountEntry{Kind: KindStream, Stream: &StreamConfig{Capacity: 10, Mode: BackpressureDrop}}, MountEntry{Kind: KindStream, Stream: &StreamConfig{Capacity: 10, Mode: BackpressureDrop}}, true},
+		{"same skill", MountEntry{Kind: KindBlob, Skill: &SkillConfig{Name: "a", Enabled: true}}, MountEntry{Kind: KindBlob, Skill: &SkillConfig{Name: "a", Enabled: true}}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := mountEntryEqual(tc.a, tc.b)
+			if got != tc.want {
+				t.Fatalf("mountEntryEqual(%+v, %+v) = %v, want %v", tc.a, tc.b, got, tc.want)
+			}
+		})
+	}
+}
