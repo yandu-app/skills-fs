@@ -126,11 +126,19 @@ func (fs *FileSystem) CloseAllHandles() {
 	}
 }
 
-// Shutdown performs a graceful teardown: it closes all handles, closes all
-// stream buffers, and clears event notifiers. After Shutdown the filesystem
-// should not be used.
+// Shutdown performs a graceful teardown: it closes all handles with the
+// provided context, closes all stream buffers, and clears event notifiers.
+// If ctx is cancelled or reaches its deadline, Shutdown returns immediately
+// with ctx.Err() and some handles may remain open.
 func (fs *FileSystem) Shutdown(ctx context.Context) error {
-	fs.CloseAllHandles()
+	for _, h := range fs.handles.snapshot() {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+		_ = h.Close(ctx)
+	}
 	fs.streams.closeAll()
 	fs.events.clear()
 	return nil
