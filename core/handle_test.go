@@ -101,6 +101,71 @@ func TestHandleWritePermissionAndDoubleClose(t *testing.T) {
 	}
 }
 
+func TestWriteClosed(t *testing.T) {
+	fs := NewFS(GlobalConfig{})
+	if err := fs.Mount("/blob", MountEntry{Kind: KindBlob, Mode: 0o666}); err != nil {
+		t.Fatal(err)
+	}
+	h, err := fs.Open("/blob", OpenWrite, CallerIdentity{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.Write(context.Background(), []byte("x")); !IsCode(err, EBUSY) {
+		t.Fatalf("expected EBUSY on closed handle write, got %v", err)
+	}
+}
+
+func TestWriteNewlineFlushError(t *testing.T) {
+	fs := NewFS(GlobalConfig{})
+	if err := fs.Mount("/blob", MountEntry{
+		Kind:         KindBlob,
+		Mode:         0o666,
+		BufferPolicy: &WriteBufferPolicy{Mode: WriteBuffered, FlushOnNewline: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	h, err := fs.Open("/blob", OpenWrite, CallerIdentity{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Close(context.Background())
+
+	// Unmount while data is buffered so the newline-triggered flush fails.
+	if err := fs.Unmount("/blob"); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.Write(context.Background(), []byte("hello\n")); !IsCode(err, ENOENT) {
+		t.Fatalf("expected ENOENT on newline flush after unmount, got %v", err)
+	}
+}
+
+func TestWriteMaxSizeFlushError(t *testing.T) {
+	fs := NewFS(GlobalConfig{})
+	if err := fs.Mount("/blob", MountEntry{
+		Kind:         KindBlob,
+		Mode:         0o666,
+		BufferPolicy: &WriteBufferPolicy{Mode: WriteBuffered, MaxSize: 5},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	h, err := fs.Open("/blob", OpenWrite, CallerIdentity{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Close(context.Background())
+
+	// Unmount while data is buffered so the max-size-triggered flush fails.
+	if err := fs.Unmount("/blob"); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.Write(context.Background(), []byte("hello world")); !IsCode(err, ENOENT) {
+		t.Fatalf("expected ENOENT on max-size flush after unmount, got %v", err)
+	}
+}
+
 func TestBufferedHandleFlushOnDelay(t *testing.T) {
 	provider := &fakeProvider{id: "p"}
 	fs := NewFS(GlobalConfig{})
