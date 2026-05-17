@@ -25,6 +25,12 @@ func New(fs *core.FileSystem, addr string, opts adapter.MountOptions) *Server {
 }
 
 func (s *Server) MountPoint() string { return s.addr }
+func (s *Server) Addr() string {
+	if s.ln != nil {
+		return s.ln.Addr().String()
+	}
+	return s.addr
+}
 func (s *Server) FileSystem() *core.FileSystem { return s.fs }
 func (s *Server) Options() adapter.MountOptions { return s.opts }
 
@@ -49,22 +55,22 @@ func (s *Server) Unmount(ctx context.Context) error {
 	return s.srv.Shutdown(ctx)
 }
 
-type wsMsg struct {
-	Op     string          `json:"op"`
-	Path   string          `json:"path"`
-	Data   string          `json:"data,omitempty"`
-	Prefix string          `json:"prefix,omitempty"`
+type WsMsg struct {
+	Op     string `json:"op"`
+	Path   string `json:"path"`
+	Data   string `json:"data,omitempty"`
+	Prefix string `json:"prefix,omitempty"`
 }
 
-type wsReply struct {
+type WsReply struct {
 	Op    string `json:"op"`
 	Path  string `json:"path,omitempty"`
 	Data  string `json:"data,omitempty"`
 	Error string `json:"error,omitempty"`
-	Event *evt   `json:"event,omitempty"`
+	Event *Evt   `json:"event,omitempty"`
 }
 
-type evt struct {
+type Evt struct {
 	Path string `json:"path"`
 	Kind string `json:"kind"`
 }
@@ -79,11 +85,11 @@ func (s *Server) handleWS(conn *websocket.Conn) {
 	}()
 
 	for {
-		var msg wsMsg
+		var msg WsMsg
 		if err := websocket.JSON.Receive(conn, &msg); err != nil {
 			return
 		}
-		reply := wsReply{Op: msg.Op, Path: msg.Path}
+		reply := WsReply{Op: msg.Op, Path: msg.Path}
 		switch msg.Op {
 		case "read":
 			data, err := s.fs.Read(context.Background(), msg.Path, core.CallerIdentity{})
@@ -113,9 +119,9 @@ func (s *Server) handleWS(conn *websocket.Conn) {
 			}, msg.Prefix)
 			go func() {
 				for e := range ch {
-					websocket.JSON.Send(conn, wsReply{
+					websocket.JSON.Send(conn, WsReply{
 						Op: "event",
-						Event: &evt{Path: e.Path, Kind: fmt.Sprint(e.Kind)},
+						Event: &Evt{Path: e.Path, Kind: fmt.Sprint(e.Kind)},
 					})
 				}
 			}()

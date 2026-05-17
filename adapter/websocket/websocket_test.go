@@ -30,10 +30,10 @@ func TestWebSocketReadWrite(t *testing.T) {
 	}
 	defer ws.Close()
 
-	if err := websocket.JSON.Send(ws, wsMsg{Op: "read", Path: "/blob"}); err != nil {
+	if err := websocket.JSON.Send(ws, WsMsg{Op: "read", Path: "/blob"}); err != nil {
 		t.Fatal(err)
 	}
-	var reply wsReply
+	var reply WsReply
 	if err := websocket.JSON.Receive(ws, &reply); err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +41,7 @@ func TestWebSocketReadWrite(t *testing.T) {
 		t.Fatalf("unexpected reply: %+v", reply)
 	}
 
-	if err := websocket.JSON.Send(ws, wsMsg{Op: "write", Path: "/blob", Data: "world"}); err != nil {
+	if err := websocket.JSON.Send(ws, WsMsg{Op: "write", Path: "/blob", Data: "world"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := websocket.JSON.Receive(ws, &reply); err != nil {
@@ -72,10 +72,10 @@ func TestWebSocketSubscribe(t *testing.T) {
 	}
 	defer ws.Close()
 
-	if err := websocket.JSON.Send(ws, wsMsg{Op: "subscribe", Prefix: "/blob"}); err != nil {
+	if err := websocket.JSON.Send(ws, WsMsg{Op: "subscribe", Prefix: "/blob"}); err != nil {
 		t.Fatal(err)
 	}
-	var reply wsReply
+	var reply WsReply
 	if err := websocket.JSON.Receive(ws, &reply); err != nil {
 		t.Fatal(err)
 	}
@@ -113,10 +113,10 @@ func TestWebSocketReadOnly(t *testing.T) {
 	}
 	defer ws.Close()
 
-	if err := websocket.JSON.Send(ws, wsMsg{Op: "write", Path: "/blob", Data: "x"}); err != nil {
+	if err := websocket.JSON.Send(ws, WsMsg{Op: "write", Path: "/blob", Data: "x"}); err != nil {
 		t.Fatal(err)
 	}
-	var reply wsReply
+	var reply WsReply
 	if err := websocket.JSON.Receive(ws, &reply); err != nil {
 		t.Fatal(err)
 	}
@@ -142,11 +142,11 @@ func TestWebSocketDialTimeout(t *testing.T) {
 	defer ws.Close()
 
 	// Send unknown op.
-	if err := websocket.JSON.Send(ws, wsMsg{Op: "nope"}); err != nil {
+	if err := websocket.JSON.Send(ws, WsMsg{Op: "nope"}); err != nil {
 		t.Fatal(err)
 	}
 	ws.SetDeadline(time.Now().Add(2 * time.Second))
-	var reply wsReply
+	var reply WsReply
 	if err := websocket.JSON.Receive(ws, &reply); err != nil {
 		t.Fatal(err)
 	}
