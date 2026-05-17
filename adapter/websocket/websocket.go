@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/net/websocket"
@@ -17,11 +18,12 @@ import (
 
 // Server streams filesystem operations over WebSocket.
 type Server struct {
-	fs   *core.FileSystem
-	addr string
-	opts adapter.MountOptions
-	srv  *http.Server
-	ln   net.Listener
+	fs    *core.FileSystem
+	addr  string
+	opts  adapter.MountOptions
+	srv   *http.Server
+	ln    net.Listener
+	conns atomic.Int32
 }
 
 func New(fs *core.FileSystem, addr string, opts adapter.MountOptions) *Server {
@@ -37,6 +39,7 @@ func (s *Server) Addr() string {
 }
 func (s *Server) FileSystem() *core.FileSystem { return s.fs }
 func (s *Server) Options() adapter.MountOptions { return s.opts }
+func (s *Server) ActiveConnections() int32     { return s.conns.Load() }
 
 func (s *Server) Mount(ctx context.Context) error {
 	mux := http.NewServeMux()
@@ -132,6 +135,8 @@ func errorCode(err error) int {
 
 func (s *Server) handleWS(conn *websocket.Conn) {
 	defer conn.Close()
+	s.conns.Add(1)
+	defer s.conns.Add(-1)
 	conn.MaxPayloadBytes = 64 * 1024 // 64 KiB max message size
 	var unsub func()
 	defer func() {
