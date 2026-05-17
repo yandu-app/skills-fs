@@ -124,6 +124,28 @@ func TestHTTPProviderRetryNoRetryOn4xx(t *testing.T) {
 	}
 }
 
+func TestHTTPProviderRetryContextCancel(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		w.Write([]byte("unavailable"))
+	}))
+	defer server.Close()
+
+	p := NewProvider("remote", server.URL).WithRetry(3, 5*time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		cancel()
+	}()
+	_, err := p.Invoke(ctx, "x", nil)
+	if err == nil {
+		t.Fatal("expected error after context cancellation")
+	}
+	if err != context.Canceled {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+}
+
 func TestHTTPProviderIntegrationWithFS(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
