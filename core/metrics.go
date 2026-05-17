@@ -24,9 +24,11 @@ var latencyBuckets = []time.Duration{
 }
 
 type Metrics struct {
-	mu       sync.RWMutex
-	ops      map[OpCode]*opMetrics
-	eventBus *eventBus
+	mu         sync.RWMutex
+	ops        map[OpCode]*opMetrics
+	eventBus   *eventBus
+	cacheHits  atomic.Uint64
+	cacheMisses atomic.Uint64
 }
 
 type opMetrics struct {
@@ -54,6 +56,14 @@ func (m *Metrics) record(op OpCode, started time.Time, err error) {
 			break
 		}
 	}
+}
+
+func (m *Metrics) recordCacheHit() {
+	m.cacheHits.Add(1)
+}
+
+func (m *Metrics) recordCacheMiss() {
+	m.cacheMisses.Add(1)
 }
 
 func (m *Metrics) op(op OpCode) *opMetrics {
@@ -104,6 +114,10 @@ func (m *Metrics) Prometheus() []byte {
 		}
 		fmt.Fprintf(&b, "skills_fs_operation_latency_seconds_bucket{op=%q,le=%q} %d\n", op, "+Inf", metric.count.Load())
 	}
+	b.WriteString("# TYPE skills_fs_provider_cache_hits_total counter\n")
+	fmt.Fprintf(&b, "skills_fs_provider_cache_hits_total %d\n", m.cacheHits.Load())
+	b.WriteString("# TYPE skills_fs_provider_cache_misses_total counter\n")
+	fmt.Fprintf(&b, "skills_fs_provider_cache_misses_total %d\n", m.cacheMisses.Load())
 	if m.eventBus != nil {
 		b.WriteString("# TYPE skills_fs_events_emitted_total counter\n")
 		b.WriteString("# TYPE skills_fs_events_delivered_total counter\n")
