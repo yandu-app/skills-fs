@@ -9,6 +9,20 @@ import (
 	"time"
 )
 
+var latencyBuckets = []time.Duration{
+	1 * time.Millisecond,
+	10 * time.Millisecond,
+	25 * time.Millisecond,
+	50 * time.Millisecond,
+	100 * time.Millisecond,
+	250 * time.Millisecond,
+	500 * time.Millisecond,
+	1 * time.Second,
+	2 * time.Second,
+	5 * time.Second,
+	10 * time.Second,
+}
+
 type Metrics struct {
 	mu  sync.RWMutex
 	ops map[OpCode]*opMetrics
@@ -18,6 +32,7 @@ type opMetrics struct {
 	count   atomic.Uint64
 	errors  atomic.Uint64
 	totalNS atomic.Uint64
+	buckets []atomic.Uint64
 }
 
 func newMetrics() *Metrics {
@@ -30,7 +45,14 @@ func (m *Metrics) record(op OpCode, started time.Time, err error) {
 	if err != nil {
 		metric.errors.Add(1)
 	}
-	metric.totalNS.Add(uint64(time.Since(started).Nanoseconds()))
+	ns := uint64(time.Since(started).Nanoseconds())
+	metric.totalNS.Add(ns)
+	for i, bound := range latencyBuckets {
+		if time.Duration(ns) <= bound {
+			metric.buckets[i].Add(1)
+			break
+		}
+	}
 }
 
 func (m *Metrics) op(op OpCode) *opMetrics {
@@ -44,7 +66,7 @@ func (m *Metrics) op(op OpCode) *opMetrics {
 	defer m.mu.Unlock()
 	metric = m.ops[op]
 	if metric == nil {
-		metric = &opMetrics{}
+		metric = &opMetrics{buckets: make([]atomic.Uint64, len(latencyBuckets))}
 		m.ops[op] = metric
 	}
 	return metric
@@ -67,11 +89,19 @@ func (m *Metrics) Prometheus() []byte {
 	b.WriteString("# TYPE skills_fs_operations_total counter\n")
 	b.WriteString("# TYPE skills_fs_operation_errors_total counter\n")
 	b.WriteString("# TYPE skills_fs_operation_latency_seconds counter\n")
+	b.WriteString("# TYPE skills_fs_operation_latency_seconds histogram\n")
 	for _, op := range keys {
 		metric := snapshot[op]
 		fmt.Fprintf(&b, "skills_fs_operations_total{op=%q} %d\n", op, metric.count.Load())
 		fmt.Fprintf(&b, "skills_fs_operation_errors_total{op=%q} %d\n", op, metric.errors.Load())
-		fmt.Fprintf(&b, "skills_fs_operation_latency_seconds{op=%q} %.9f\n", op, float64(metric.totalNS.Load())/1e9)
+		fmt.Fprintf(&b, "skills_fs_operation_latency_seconds_sum{op=%q} %.9f\n", op, float64(metric.totalNS.Load())/1e9)
+		fmt.Fprintf(&b, "skills_fs_operation_latency_seconds_count{op=%q} %d\n", op, metric.count.Load())
+		var cumulative uint64
+		for i, bound := range latencyBuckets {
+			cumulative += metric.buckets[i].Load()
+			fmt.Fprintf(&b, "skills_fs_operation_latency_seconds_bucket{op=%q,le=%q} %d\n", op, bound.String(), cumulative)
+		}
+		fmt.Fprintf(&b, "skills_fs_operation_latency_seconds_bucket{op=%q,le=%q} %d\n", op, "+Inf", metric.count.Load())
 	}
 	return []byte(b.String())
 }

@@ -479,7 +479,9 @@ func TestSysMetricsVirtualFiles(t *testing.T) {
 	for _, want := range []string{
 		"skills_fs_operations_total{op=\"read\"}",
 		"skills_fs_operation_errors_total{op=\"read\"}",
-		"skills_fs_operation_latency_seconds{op=\"read\"}",
+		"skills_fs_operation_latency_seconds_sum{op=\"read\"}",
+		"skills_fs_operation_latency_seconds_count{op=\"read\"}",
+		"skills_fs_operation_latency_seconds_bucket{op=\"read\"",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("metrics missing %q in:\n%s", want, text)
