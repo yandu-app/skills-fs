@@ -13,7 +13,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.24.x"
+          go-version: "1.25.x"
       - run: test -z "$(gofmt -l .)" || (echo "gofmt would reformat:" && gofmt -l . && exit 1)
 
   lint:
@@ -23,7 +23,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.24.x"
+          go-version: "1.25.x"
       - run: go vet ./...
       - run: go run honnef.co/go/tools/cmd/staticcheck@latest ./...
 
@@ -34,7 +34,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.24.x"
+          go-version: "1.25.x"
       - run: go test ./... -coverprofile=coverage.out
       - run: go tool cover -func=coverage.out
       - run: ./scripts/check_coverage.sh 85.0 coverage.out
@@ -47,7 +47,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.24.x"
+          go-version: "1.25.x"
       - run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
   bench-smoke:
@@ -57,5 +57,5 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.24.x"
+          go-version: "1.25.x"
       - run: go test ./bench -bench . -benchmem -benchtime=100ms
