@@ -1809,3 +1809,68 @@ func TestMountEntryEqual(t *testing.T) {
 		})
 	}
 }
+
+func TestFilterDirEntriesByNamespace(t *testing.T) {
+	fs := NewFS(GlobalConfig{})
+	if err := fs.Mount("/ns-a", MountEntry{Kind: KindBlob, Mode: 0o644, Namespace: "alpha"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Mount("/ns-b", MountEntry{Kind: KindBlob, Mode: 0o644, Namespace: "beta"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Mount("/global", MountEntry{Kind: KindBlob, Mode: 0o644, Namespace: ""}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Caller in alpha namespace should see alpha and global, but not beta.
+	caller := CallerIdentity{Namespace: "alpha"}
+	entries, err := fs.Readdir("/", caller)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, e := range entries {
+		names = append(names, e.Name)
+	}
+	for _, want := range []string{"global", "ns-a", "skills", "sys"} {
+		found := false
+		for _, n := range names {
+			if n == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("expected entry %q in root dir, got %v", want, names)
+		}
+	}
+	for _, reject := range []string{"ns-b"} {
+		for _, n := range names {
+			if n == reject {
+				t.Fatalf("expected entry %q to be filtered from root dir", reject)
+			}
+		}
+	}
+
+	// Empty-namespace caller sees everything.
+	allEntries, err := fs.Readdir("/", CallerIdentity{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var allNames []string
+	for _, e := range allEntries {
+		allNames = append(allNames, e.Name)
+	}
+	for _, want := range []string{"global", "ns-a", "ns-b", "skills", "sys"} {
+		found := false
+		for _, n := range allNames {
+			if n == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("expected entry %q in root dir for global caller, got %v", want, allNames)
+		}
+	}
+}
