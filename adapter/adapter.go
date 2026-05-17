@@ -24,6 +24,7 @@ type MountOptions struct {
 	RateLimitRPS    float64       // zero = no rate limiting
 	RateLimitBurst  int           // max burst size for rate limiter
 	CORSOrigins     []string      // empty = allow all origins
+	MaxConnections  int           // zero = unlimited concurrent connections
 }
 
 // ShutdownContext returns a context with timeout if the supplied context has
