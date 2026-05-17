@@ -79,7 +79,14 @@ type FileSystem struct {
 	bufPool    sync.Pool
 	breakers   map[string]*circuitBreaker
 	breakersMu sync.Mutex
+	providerCacheMu sync.Mutex
+	providerCache   map[string]providerCacheEntry
 	mu         sync.RWMutex
+}
+
+type providerCacheEntry struct {
+	result  *ProviderResult
+	expires time.Time
 }
 
 func NewFS(cfg GlobalConfig) *FileSystem {
@@ -94,7 +101,8 @@ func NewFS(cfg GlobalConfig) *FileSystem {
 		metrics:   newMetrics(),
 		skills:    NewSkillGenerator(cfg.SkillsRoot),
 		events:    newEventBus(),
-		breakers:  make(map[string]*circuitBreaker),
+		breakers:      make(map[string]*circuitBreaker),
+		providerCache: make(map[string]providerCacheEntry),
 		bufPool: sync.Pool{
 			New: func() interface{} {
 				b := make([]byte, streamReadChunk)
@@ -465,12 +473,12 @@ func (fs *FileSystem) Read(ctx context.Context, path string, caller CallerIdenti
 		}
 		if cap.Async {
 			go func() {
-				_, err := invokeProvider(context.Background(), provider, cap, OpRead, path, params, nil, caller)
+				_, err := fs.invokeProvider(context.Background(), provider, cap, OpRead, path, params, nil, caller)
 				fs.recordBreakerResult(cap.ProviderID, err == nil)
 			}()
 			return []byte{}, nil
 		}
-		data, err := invokeProvider(ctx, provider, cap, OpRead, path, params, nil, caller)
+		data, err := fs.invokeProvider(ctx, provider, cap, OpRead, path, params, nil, caller)
 		fs.recordBreakerResult(cap.ProviderID, err == nil)
 		return data, err
 	case KindLink:
@@ -553,7 +561,7 @@ func (fs *FileSystem) Write(ctx context.Context, path string, payload []byte, ca
 			return err
 		}
 		return serial.run(func() error {
-			_, err := invokeProvider(ctx, provider, cap, OpWrite, path, params, payload, caller)
+			_, err := fs.invokeProvider(ctx, provider, cap, OpWrite, path, params, payload, caller)
 			fs.recordBreakerResult(cap.ProviderID, err == nil)
 			return err
 		})
@@ -731,7 +739,7 @@ func (fs *FileSystem) providerFor(m *MountEntry, op OpCode, path string) (*CapCo
 	return cap, provider, nil
 }
 
-func invokeProvider(ctx context.Context, provider Provider, cap *CapConfig, op OpCode, path string, pathParams ParamSet, payload []byte, caller CallerIdentity) ([]byte, error) {
+func (fs *FileSystem) invokeProvider(ctx context.Context, provider Provider, cap *CapConfig, op OpCode, path string, pathParams ParamSet, payload []byte, caller CallerIdentity) ([]byte, error) {
 	if cap.Timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, cap.Timeout)
@@ -748,12 +756,30 @@ func invokeProvider(ctx context.Context, provider Provider, cap *CapConfig, op O
 			return nil, posix(EINVAL, op, path, err)
 		}
 	}
+
+	cacheKey := ""
+	if cap.CacheTTL > 0 {
+		cacheKey = fmt.Sprintf("%s|%s|%v", cap.ProviderID, cap.Action, params)
+		fs.providerCacheMu.Lock()
+		ent, ok := fs.providerCache[cacheKey]
+		fs.providerCacheMu.Unlock()
+		if ok && time.Now().Before(ent.expires) {
+			return ent.result.Data, nil
+		}
+	}
+
 	result, err := provider.Invoke(ctx, cap.Action, params)
 	if err != nil {
 		return nil, MapProviderError(err, op, path)
 	}
 	if result == nil {
 		return nil, nil
+	}
+
+	if cap.CacheTTL > 0 && cacheKey != "" {
+		fs.providerCacheMu.Lock()
+		fs.providerCache[cacheKey] = providerCacheEntry{result: result, expires: time.Now().Add(cap.CacheTTL)}
+		fs.providerCacheMu.Unlock()
 	}
 	return result.Data, nil
 }
