@@ -2,6 +2,8 @@ package core
 
 import (
 	"context"
+	"errors"
+	"path"
 	"sort"
 	"strings"
 	"sync"
@@ -398,6 +400,46 @@ func (fs *FileSystem) ResolveParams(path string) (MountEntry, ParamSet, error) {
 		return MountEntry{}, ParamSet{}, err
 	}
 	return *rm.mount, rm.params, nil
+}
+
+// ReadLink returns the target of a symlink without following it.
+func (fs *FileSystem) ReadLink(path string) (string, error) {
+	fs.mu.RLock()
+	defer fs.mu.RUnlock()
+	rm, err := fs.router.match(path)
+	if err != nil {
+		return "", err
+	}
+	if rm.mount.Kind != KindLink {
+		return "", posix(EINVAL, OpRead, path, nil)
+	}
+	return rm.mount.LinkPath, nil
+}
+
+// FollowLink resolves a path by following symlinks. It returns the final
+// resolved path or an error if a loop is detected or a link target is invalid.
+func (fs *FileSystem) FollowLink(p string) (string, error) {
+	const maxDepth = 16
+	for i := 0; i < maxDepth; i++ {
+		target, err := fs.ReadLink(p)
+		if err != nil {
+			var pe *PosixError
+			if errors.As(err, &pe) && pe.Code == EINVAL {
+				// Not a symlink — return the path as-is.
+				return p, nil
+			}
+			return "", err
+		}
+		if !strings.HasPrefix(target, "/") {
+			dir := p[:strings.LastIndex(p, "/")]
+			if dir == "" {
+				dir = "/"
+			}
+			target = path.Join(dir, target)
+		}
+		p = target
+	}
+	return "", posix(ELOOP, OpRead, p, nil)
 }
 
 func (fs *FileSystem) providerFor(m *MountEntry, op OpCode, path string) (*CapConfig, Provider, error) {

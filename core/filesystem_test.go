@@ -501,6 +501,79 @@ func TestLinkRead(t *testing.T) {
 	}
 }
 
+func TestReadLink(t *testing.T) {
+	fs := NewFS(GlobalConfig{})
+	if err := fs.Mount("/link", MountEntry{Kind: KindLink, LinkPath: "/target"}); err != nil {
+		t.Fatal(err)
+	}
+	target, err := fs.ReadLink("/link")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target != "/target" {
+		t.Fatalf("unexpected target %q", target)
+	}
+}
+
+func TestReadLinkNotLink(t *testing.T) {
+	fs := NewFS(GlobalConfig{})
+	if err := fs.Mount("/blob", MountEntry{Kind: KindBlob, Mode: 0o666}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := fs.ReadLink("/blob")
+	if !IsCode(err, EINVAL) {
+		t.Fatalf("expected EINVAL, got %v", err)
+	}
+}
+
+func TestFollowLinkAbsolute(t *testing.T) {
+	fs := NewFS(GlobalConfig{})
+	if err := fs.Mount("/target", MountEntry{Kind: KindBlob, Mode: 0o666, BlobData: []byte("hello")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Mount("/link", MountEntry{Kind: KindLink, LinkPath: "/target"}); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := fs.FollowLink("/link")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved != "/target" {
+		t.Fatalf("unexpected resolved path %q", resolved)
+	}
+}
+
+func TestFollowLinkRelative(t *testing.T) {
+	fs := NewFS(GlobalConfig{})
+	if err := fs.Mount("/dir/target", MountEntry{Kind: KindBlob, Mode: 0o666, BlobData: []byte("hello")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Mount("/dir/link", MountEntry{Kind: KindLink, LinkPath: "target"}); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := fs.FollowLink("/dir/link")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved != "/dir/target" {
+		t.Fatalf("unexpected resolved path %q", resolved)
+	}
+}
+
+func TestFollowLinkLoop(t *testing.T) {
+	fs := NewFS(GlobalConfig{})
+	if err := fs.Mount("/a", MountEntry{Kind: KindLink, LinkPath: "/b"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Mount("/b", MountEntry{Kind: KindLink, LinkPath: "/a"}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := fs.FollowLink("/a")
+	if !IsCode(err, ELOOP) {
+		t.Fatalf("expected ELOOP, got %v", err)
+	}
+}
+
 func TestUnknownKindStatIsEINVAL(t *testing.T) {
 	fs := NewFS(GlobalConfig{})
 	if err := fs.Mount("/badkind", MountEntry{Kind: NodeKind("weird")}); err != nil {
