@@ -10,10 +10,11 @@ import (
 var ErrNotImplemented = errors.New("adapter not implemented")
 
 type MountOptions struct {
-	ReadOnly    bool
-	AllowOther  bool
-	TLSCertFile string
-	TLSKeyFile  string
+	ReadOnly       bool
+	AllowOther     bool
+	TLSCertFile    string
+	TLSKeyFile     string
+	AllowedOrigins []string // empty = allow all (for WebSocket origin validation)
 }
 
 type MountedFS interface {
