@@ -1,4 +1,4 @@
-.PHONY: test coverage coverage-all race bench build gen-docs lint
+.PHONY: test coverage coverage-all race bench build gen-docs lint vulncheck
 
 GOCACHE ?= /tmp/skills-fs-gocache
 
@@ -42,3 +42,6 @@ gen-docs:
 lint:
 	go vet ./...
 	go run honnef.co/go/tools/cmd/staticcheck@latest ./...
+
+vulncheck:
+	go run golang.org/x/vuln/cmd/govulncheck@latest ./...

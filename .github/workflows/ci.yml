@@ -30,6 +30,16 @@ jobs:
       - run: ./scripts/check_coverage.sh 85.0 coverage.out
       - run: go test -race ./core
 
+  vulncheck:
+    name: Vulnerability scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24.x"
+      - run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
   bench-smoke:
     name: Benchmark smoke
     runs-on: ubuntu-latest
