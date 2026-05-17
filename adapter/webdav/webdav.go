@@ -97,6 +97,8 @@ func (s *Server) Unmount(ctx context.Context) error {
 	if s.srv == nil {
 		return nil
 	}
+	ctx, cancel := s.opts.ShutdownContext(ctx)
+	defer cancel()
 	return s.srv.Shutdown(ctx)
 }
 

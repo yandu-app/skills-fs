@@ -3,19 +3,37 @@ package adapter
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/skills-fs/skills-fs/core"
 )
 
 var ErrNotImplemented = errors.New("adapter not implemented")
 
+// DefaultShutdownTimeout is applied when MountOptions.ShutdownTimeout is zero.
+const DefaultShutdownTimeout = 30 * time.Second
+
 type MountOptions struct {
-	ReadOnly       bool
-	AllowOther     bool
-	TLSCertFile    string
-	TLSKeyFile     string
-	AllowedOrigins []string // empty = allow all (for WebSocket origin validation)
-	EnableGzip     bool     // compress GET/PROPFIND responses for WebDAV
+	ReadOnly        bool
+	AllowOther      bool
+	TLSCertFile     string
+	TLSKeyFile      string
+	AllowedOrigins  []string      // empty = allow all (for WebSocket origin validation)
+	EnableGzip      bool          // compress GET/PROPFIND responses for WebDAV
+	ShutdownTimeout time.Duration // zero = use DefaultShutdownTimeout
+}
+
+// ShutdownContext returns a context with timeout if the supplied context has
+// no deadline and a positive timeout is configured.
+func (o MountOptions) ShutdownContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	timeout := o.ShutdownTimeout
+	if timeout <= 0 {
+		timeout = DefaultShutdownTimeout
+	}
+	if _, ok := ctx.Deadline(); ok {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, timeout)
 }
 
 type MountedFS interface {
