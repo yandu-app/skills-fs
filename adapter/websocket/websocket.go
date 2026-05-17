@@ -10,6 +10,7 @@ import (
 
 	"golang.org/x/net/websocket"
 	"github.com/skills-fs/skills-fs/adapter"
+	"github.com/skills-fs/skills-fs/adapter/middleware"
 	"github.com/skills-fs/skills-fs/core"
 )
 
@@ -42,7 +43,8 @@ func (s *Server) Mount(ctx context.Context) error {
 		Handshake: s.checkOrigin,
 		Handler:   s.handleWS,
 	}
-	mux.Handle("/", wsSrv)
+	handler := middleware.CORS(s.opts.CORSOrigins)(wsSrv)
+	mux.Handle("/", handler)
 
 	s.srv = &http.Server{Addr: s.addr, Handler: mux}
 	ln, err := net.Listen("tcp", s.addr)

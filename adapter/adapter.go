@@ -23,6 +23,7 @@ type MountOptions struct {
 	ShutdownTimeout time.Duration // zero = use DefaultShutdownTimeout
 	RateLimitRPS    float64       // zero = no rate limiting
 	RateLimitBurst  int           // max burst size for rate limiter
+	CORSOrigins     []string      // empty = allow all origins
 }
 
 // ShutdownContext returns a context with timeout if the supplied context has

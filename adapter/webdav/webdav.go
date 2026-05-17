@@ -59,6 +59,7 @@ func (s *Server) Mount(ctx context.Context) error {
 
 	handler := middleware.RequestID(mux)
 	handler = middleware.AccessLog(slog.Default())(handler)
+	handler = middleware.CORS(s.opts.CORSOrigins)(handler)
 	if s.opts.RateLimitRPS > 0 {
 		burst := s.opts.RateLimitBurst
 		if burst <= 0 {
