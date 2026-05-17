@@ -35,6 +35,13 @@ func (s *Server) MountPoint() string {
 	return s.addr
 }
 
+func (s *Server) Addr() string {
+	if s.ln != nil {
+		return s.ln.Addr().String()
+	}
+	return s.addr
+}
+
 func (s *Server) FileSystem() *core.FileSystem {
 	return s.fs
 }
