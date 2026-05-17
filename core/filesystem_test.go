@@ -1551,3 +1551,122 @@ func TestProviderTimeoutSuccess(t *testing.T) {
 		t.Fatalf("unexpected data %q", data)
 	}
 }
+
+func TestNamespaceIsolationRead(t *testing.T) {
+	fs := NewFS(GlobalConfig{})
+	if err := fs.Mount("/ns-a/data", MountEntry{Kind: KindBlob, Mode: 0o644, BlobData: []byte("a"), Namespace: "tenant-a"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Mount("/ns-b/data", MountEntry{Kind: KindBlob, Mode: 0o644, BlobData: []byte("b"), Namespace: "tenant-b"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// tenant-a can read their own data.
+	data, err := fs.Read(context.Background(), "/ns-a/data", CallerIdentity{Namespace: "tenant-a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "a" {
+		t.Fatalf("expected a, got %q", data)
+	}
+
+	// tenant-a cannot read tenant-b data.
+	_, err = fs.Read(context.Background(), "/ns-b/data", CallerIdentity{Namespace: "tenant-a"})
+	if !IsCode(err, ENOENT) {
+		t.Fatalf("expected ENOENT cross-namespace read, got %v", err)
+	}
+
+	// tenant-b cannot read tenant-a data.
+	_, err = fs.Read(context.Background(), "/ns-a/data", CallerIdentity{Namespace: "tenant-b"})
+	if !IsCode(err, ENOENT) {
+		t.Fatalf("expected ENOENT cross-namespace read, got %v", err)
+	}
+}
+
+func TestNamespaceIsolationReaddir(t *testing.T) {
+	fs := NewFS(GlobalConfig{})
+	if err := fs.Mount("/dir/a", MountEntry{Kind: KindBlob, Mode: 0o644, BlobData: []byte("a"), Namespace: "tenant-a"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Mount("/dir/b", MountEntry{Kind: KindBlob, Mode: 0o644, BlobData: []byte("b"), Namespace: "tenant-b"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Mount("/dir/c", MountEntry{Kind: KindBlob, Mode: 0o644, BlobData: []byte("c")}); err != nil {
+		t.Fatal(err)
+	}
+
+	// tenant-a sees only a and c (global).
+	entries, err := fs.Readdir("/dir", CallerIdentity{Namespace: "tenant-a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 entries for tenant-a, got %d", len(entries))
+	}
+	names := make(map[string]bool)
+	for _, e := range entries {
+		names[e.Name] = true
+	}
+	if !names["a"] || !names["c"] {
+		t.Fatalf("expected a and c, got %+v", names)
+	}
+	if names["b"] {
+		t.Fatal("tenant-a should not see b")
+	}
+}
+
+func TestNamespaceIsolationGlobalMount(t *testing.T) {
+	fs := NewFS(GlobalConfig{})
+	if err := fs.Mount("/shared", MountEntry{Kind: KindBlob, Mode: 0o644, BlobData: []byte("shared")}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Any tenant can access global mounts.
+	for _, ns := range []string{"tenant-a", "tenant-b", ""} {
+		data, err := fs.Read(context.Background(), "/shared", CallerIdentity{Namespace: ns})
+		if err != nil {
+			t.Fatalf("namespace %q: %v", ns, err)
+		}
+		if string(data) != "shared" {
+			t.Fatalf("namespace %q: expected shared, got %q", ns, data)
+		}
+	}
+}
+
+func TestNamespaceIsolationStat(t *testing.T) {
+	fs := NewFS(GlobalConfig{})
+	if err := fs.Mount("/secret", MountEntry{Kind: KindBlob, Mode: 0o644, BlobData: []byte("x"), Namespace: "private"}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := fs.Stat("/secret", CallerIdentity{Namespace: "other"})
+	if !IsCode(err, ENOENT) {
+		t.Fatalf("expected ENOENT, got %v", err)
+	}
+
+	st, err := fs.Stat("/secret", CallerIdentity{Namespace: "private"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Kind != KindBlob {
+		t.Fatalf("expected blob, got %s", st.Kind)
+	}
+}
+
+func TestNamespaceIsolationOpen(t *testing.T) {
+	fs := NewFS(GlobalConfig{})
+	if err := fs.Mount("/file", MountEntry{Kind: KindBlob, Mode: 0o644, BlobData: []byte("x"), Namespace: "ns1"}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := fs.Open("/file", OpenRead, CallerIdentity{Namespace: "ns2"})
+	if !IsCode(err, ENOENT) {
+		t.Fatalf("expected ENOENT, got %v", err)
+	}
+
+	h, err := fs.Open("/file", OpenRead, CallerIdentity{Namespace: "ns1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.Close(context.Background())
+}

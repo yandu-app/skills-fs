@@ -317,6 +317,9 @@ func (fs *FileSystem) Stat(path string, caller CallerIdentity) (st Stat, err err
 		return Stat{}, err
 	}
 	m := rm.mount
+	if !canAccessNamespace(caller, m) {
+		return Stat{}, posix(ENOENT, OpStat, path, nil)
+	}
 	var size int64
 	switch m.Kind {
 	case KindBlob:
@@ -365,6 +368,9 @@ func (fs *FileSystem) Readdir(path string, caller CallerIdentity) (entries []Dir
 		rm, err := fs.router.match(path)
 		if err == nil {
 			m := rm.mount
+			if !canAccessNamespace(caller, m) {
+				return nil, posix(ENOENT, OpReaddir, path, nil)
+			}
 			if !canAccess(caller, m.UID, m.GID, m.Mode, OpReaddir) {
 				return nil, posix(EACCES, OpReaddir, path, nil)
 			}
@@ -377,6 +383,7 @@ func (fs *FileSystem) Readdir(path string, caller CallerIdentity) (entries []Dir
 	if err != nil {
 		return nil, err
 	}
+	entries = filterDirEntriesByNamespace(fs.router, entries, path, caller)
 	if path == "/" {
 		entries = append(entries, DirEntry{Name: "sys", Kind: KindDir, Mode: 0o555})
 		entries = append(entries, DirEntry{Name: "skills", Kind: KindDir, Mode: 0o555})
@@ -384,6 +391,33 @@ func (fs *FileSystem) Readdir(path string, caller CallerIdentity) (entries []Dir
 		sort.Slice(entries, func(i, j int) bool { return entries[i].Name < entries[j].Name })
 	}
 	return entries, nil
+}
+
+// filterDirEntriesByNamespace removes entries whose exact-path mount belongs
+// to a different namespace. Intermediate directories (no mount at the exact
+// path) are kept because they may contain accessible descendants.
+func filterDirEntriesByNamespace(r *router, entries []DirEntry, parent string, caller CallerIdentity) []DirEntry {
+	if caller.Namespace == "" {
+		return entries
+	}
+	var out []DirEntry
+	for _, e := range entries {
+		childPath := parent + "/" + e.Name
+		if parent == "/" {
+			childPath = "/" + e.Name
+		}
+		rm, err := r.match(childPath)
+		if err != nil {
+			// No exact match: intermediate directory or param placeholder.
+			// Keep it; deeper access will be checked at the leaf.
+			out = append(out, e)
+			continue
+		}
+		if canAccessNamespace(caller, rm.mount) {
+			out = append(out, e)
+		}
+	}
+	return out
 }
 
 func (fs *FileSystem) Read(ctx context.Context, path string, caller CallerIdentity) (data []byte, err error) {
@@ -409,6 +443,10 @@ func (fs *FileSystem) Read(ctx context.Context, path string, caller CallerIdenti
 		return nil, err
 	}
 	m := rm.mount
+	if !canAccessNamespace(caller, m) {
+		fs.mu.RUnlock()
+		return nil, posix(ENOENT, OpRead, path, nil)
+	}
 	if !canAccess(caller, m.UID, m.GID, m.Mode, OpRead) {
 		fs.mu.RUnlock()
 		return nil, posix(EACCES, OpRead, path, nil)
@@ -479,6 +517,10 @@ func (fs *FileSystem) Write(ctx context.Context, path string, payload []byte, ca
 		return err
 	}
 	m := rm.mount
+	if !canAccessNamespace(caller, m) {
+		fs.mu.RUnlock()
+		return posix(ENOENT, OpWrite, path, nil)
+	}
 	if !canAccess(caller, m.UID, m.GID, m.Mode, OpWrite) {
 		fs.mu.RUnlock()
 		return posix(EACCES, OpWrite, path, nil)

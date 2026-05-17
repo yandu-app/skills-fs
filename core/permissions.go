@@ -1,5 +1,18 @@
 package core
 
+// canAccessNamespace returns true when the caller is allowed to see the mount.
+// A non-empty caller namespace isolates the caller to mounts in that namespace
+// or the global (empty) namespace.
+func canAccessNamespace(caller CallerIdentity, mount *MountEntry) bool {
+	if caller.Namespace == "" {
+		return true
+	}
+	if mount.Namespace == "" {
+		return true
+	}
+	return caller.Namespace == mount.Namespace
+}
+
 func canAccess(caller CallerIdentity, uid, gid, mode uint32, op OpCode) bool {
 	if op == OpStat || op == OpReaddir {
 		return true

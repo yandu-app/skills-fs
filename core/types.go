@@ -114,6 +114,7 @@ type MountEntry struct {
 	Skill        *SkillConfig
 	Stream       *StreamConfig
 	Visibility   string
+	Namespace    string // empty = global namespace
 
 	BlobData []byte
 	LinkPath string
@@ -135,8 +136,9 @@ type OpContext struct {
 }
 
 type CallerIdentity struct {
-	UID uint32
-	GID uint32
+	UID       uint32
+	GID       uint32
+	Namespace string // empty = global namespace
 }
 
 type Provider interface {
