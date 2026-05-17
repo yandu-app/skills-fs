@@ -692,6 +692,18 @@ func TestMaxMountsBudget(t *testing.T) {
 	}
 }
 
+func TestMountReservedPath(t *testing.T) {
+	fs := NewFS(GlobalConfig{})
+	for _, p := range []string{"/sys", "/sys/metrics", "/healthz", "/debug", "/debug/pprof"} {
+		if err := fs.Mount(p, MountEntry{Kind: KindBlob}); !IsCode(err, EINVAL) {
+			t.Fatalf("mount %q: expected EINVAL, got %v", p, err)
+		}
+	}
+	if err := fs.Mount("/syslog", MountEntry{Kind: KindBlob}); err != nil {
+		t.Fatalf("mount /syslog should be allowed, got %v", err)
+	}
+}
+
 func TestMaxBlobSizeBudget(t *testing.T) {
 	fs := NewFS(GlobalConfig{MaxBlobSize: 5})
 	if err := fs.Mount("/small", MountEntry{Kind: KindBlob, Mode: 0o666, BlobData: []byte("12345")}); err != nil {

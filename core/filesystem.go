@@ -10,6 +10,19 @@ import (
 	"time"
 )
 
+// reservedPaths are blocked from user mounts to prevent shadowing system
+// endpoints and adapter internals.
+var reservedPaths = []string{"/sys", "/healthz", "/debug"}
+
+func isReservedPath(p string) bool {
+	for _, r := range reservedPaths {
+		if p == r || strings.HasPrefix(p, r+"/") {
+			return true
+		}
+	}
+	return false
+}
+
 // normalizePath validates and canonicalizes a path. It rejects empty
 // segments, ".", "..", and paths that do not start with "/".
 func normalizePath(p string) (string, error) {
@@ -108,6 +121,9 @@ func (fs *FileSystem) Mount(p string, entry MountEntry) error {
 	path, err := normalizePath(p)
 	if err != nil {
 		return err
+	}
+	if isReservedPath(path) {
+		return posix(EINVAL, OpStat, path, nil)
 	}
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
