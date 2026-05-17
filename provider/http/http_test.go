@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/skills-fs/skills-fs/core"
 )
@@ -75,6 +76,51 @@ func TestHTTPProviderConnectionError(t *testing.T) {
 	_, err := p.Invoke(context.Background(), "x", nil)
 	if err == nil {
 		t.Fatal("expected error for connection refused")
+	}
+}
+
+func TestHTTPProviderRetrySuccess(t *testing.T) {
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts < 3 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			w.Write([]byte("temporarily unavailable"))
+			return
+		}
+		w.Write([]byte(`{"status":"ok"}`))
+	}))
+	defer server.Close()
+
+	p := NewProvider("remote", server.URL).WithRetry(3, 10*time.Millisecond)
+	result, err := p.Invoke(context.Background(), "x", nil)
+	if err != nil {
+		t.Fatalf("expected success after retries, got: %v", err)
+	}
+	if string(result.Data) != `{"status":"ok"}` {
+		t.Fatalf("unexpected data %q", result.Data)
+	}
+	if attempts != 3 {
+		t.Fatalf("expected 3 attempts, got %d", attempts)
+	}
+}
+
+func TestHTTPProviderRetryNoRetryOn4xx(t *testing.T) {
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte("bad request"))
+	}))
+	defer server.Close()
+
+	p := NewProvider("remote", server.URL).WithRetry(3, 10*time.Millisecond)
+	_, err := p.Invoke(context.Background(), "x", nil)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if attempts != 1 {
+		t.Fatalf("expected 1 attempt for 4xx, got %d", attempts)
 	}
 }
 
