@@ -1494,6 +1494,39 @@ func TestWebDAVPropfindETag(t *testing.T) {
 	}
 }
 
+func TestWebDAVPropfindQuota(t *testing.T) {
+	fs := core.NewFS(core.GlobalConfig{})
+	if err := fs.Mount("/blob", core.MountEntry{Kind: core.KindBlob, Mode: 0o644, BlobData: []byte("quota-test")}); err != nil {
+		t.Fatal(err)
+	}
+
+	server := New(fs, "127.0.0.1:0", adapter.MountOptions{})
+	if err := server.Mount(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Unmount(context.Background())
+
+	baseURL := "http://" + server.ln.Addr().String()
+	req, _ := http.NewRequest("PROPFIND", baseURL+"/blob", nil)
+	req.Header.Set("Depth", "0")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusMultiStatus {
+		t.Fatalf("expected 207, got %d", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	bodyStr := string(body)
+	if !strings.Contains(bodyStr, "quota-available-bytes") {
+		t.Fatalf("PROPFIND response missing quota-available-bytes: %s", bodyStr)
+	}
+	if !strings.Contains(bodyStr, "quota-used-bytes") {
+		t.Fatalf("PROPFIND response missing quota-used-bytes: %s", bodyStr)
+	}
+}
+
 func TestWebDAVRange(t *testing.T) {
 	fs := core.NewFS(core.GlobalConfig{})
 	data := []byte("0123456789abcdef")

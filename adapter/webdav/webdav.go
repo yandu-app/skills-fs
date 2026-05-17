@@ -552,12 +552,14 @@ func (s *Server) propfindResponse(p string, stat core.Stat, data []byte) respons
 		rt = &resourceType{Collection: ""}
 	}
 	pr := prop{
-		DisplayName:      path.Base(p),
-		GetContentLength: stat.Size,
-		GetContentType:   contentTypeFromKind(stat.Kind),
-		ResourceType:     rt,
-		CreationDate:     "1970-01-01T00:00:00Z",
-		GetLastModified:  "Thu, 01 Jan 1970 00:00:00 GMT",
+		DisplayName:         path.Base(p),
+		GetContentLength:    stat.Size,
+		GetContentType:      contentTypeFromKind(stat.Kind),
+		ResourceType:        rt,
+		CreationDate:        "1970-01-01T00:00:00Z",
+		GetLastModified:     "Thu, 01 Jan 1970 00:00:00 GMT",
+		QuotaAvailableBytes: 1 << 62,
+		QuotaUsedBytes:      0,
 	}
 	if len(data) > 0 {
 		pr.GetETag = etag(data)
@@ -588,14 +590,16 @@ type propstat struct {
 }
 
 type prop struct {
-	XMLName          xml.Name      `xml:"D:prop"`
-	DisplayName      string        `xml:"D:displayname"`
-	GetContentLength int64         `xml:"D:getcontentlength"`
-	GetContentType   string        `xml:"D:getcontenttype"`
-	GetETag          string        `xml:"D:getetag,omitempty"`
-	ResourceType     *resourceType `xml:"D:resourcetype"`
-	CreationDate     string        `xml:"D:creationdate"`
-	GetLastModified  string        `xml:"D:getlastmodified"`
+	XMLName             xml.Name      `xml:"D:prop"`
+	DisplayName         string        `xml:"D:displayname"`
+	GetContentLength    int64         `xml:"D:getcontentlength"`
+	GetContentType      string        `xml:"D:getcontenttype"`
+	GetETag             string        `xml:"D:getetag,omitempty"`
+	ResourceType        *resourceType `xml:"D:resourcetype"`
+	CreationDate        string        `xml:"D:creationdate"`
+	GetLastModified     string        `xml:"D:getlastmodified"`
+	QuotaAvailableBytes int64         `xml:"D:quota-available-bytes"`
+	QuotaUsedBytes      int64         `xml:"D:quota-used-bytes"`
 }
 
 type resourceType struct {
