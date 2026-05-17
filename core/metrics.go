@@ -24,10 +24,10 @@ var latencyBuckets = []time.Duration{
 }
 
 type Metrics struct {
-	mu         sync.RWMutex
-	ops        map[OpCode]*opMetrics
-	eventBus   *eventBus
-	cacheHits  atomic.Uint64
+	mu          sync.RWMutex
+	ops         map[OpCode]*opMetrics
+	eventBus    *eventBus
+	cacheHits   atomic.Uint64
 	cacheMisses atomic.Uint64
 }
 
