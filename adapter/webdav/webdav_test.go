@@ -1527,6 +1527,59 @@ func TestWebDAVPropfindQuota(t *testing.T) {
 	}
 }
 
+func TestWebDAVSearch(t *testing.T) {
+	fs := core.NewFS(core.GlobalConfig{})
+	if err := fs.Mount("/hello.txt", core.MountEntry{Kind: core.KindBlob, Mode: 0o644, BlobData: []byte("hello")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Mount("/world.txt", core.MountEntry{Kind: core.KindBlob, Mode: 0o644, BlobData: []byte("world")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Mount("/other", core.MountEntry{Kind: core.KindDir, Mode: 0o755}); err != nil {
+		t.Fatal(err)
+	}
+
+	server := New(fs, "127.0.0.1:0", adapter.MountOptions{})
+	if err := server.Mount(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Unmount(context.Background())
+
+	searchBody := `<?xml version="1.0" encoding="UTF-8"?>
+<searchrequest xmlns="DAV:">
+  <basicsearch>
+    <where>
+      <like>
+        <literal>%hello%</literal>
+      </like>
+    </where>
+  </basicsearch>
+</searchrequest>`
+
+	baseURL := "http://" + server.ln.Addr().String()
+	req, _ := http.NewRequest("SEARCH", baseURL+"/", strings.NewReader(searchBody))
+	req.Header.Set("Content-Type", "text/xml; charset=utf-8")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusMultiStatus {
+		t.Fatalf("expected 207, got %d", resp.StatusCode)
+	}
+
+	var ms decodeMultistatus
+	if err := xml.NewDecoder(resp.Body).Decode(&ms); err != nil {
+		t.Fatalf("decode multistatus: %v", err)
+	}
+	if len(ms.Responses) != 1 {
+		t.Fatalf("expected 1 result for '%%hello%%', got %d", len(ms.Responses))
+	}
+	if ms.Responses[0].Href != "/hello.txt" {
+		t.Fatalf("expected /hello.txt, got %s", ms.Responses[0].Href)
+	}
+}
+
 func TestWebDAVRange(t *testing.T) {
 	fs := core.NewFS(core.GlobalConfig{})
 	data := []byte("0123456789abcdef")
