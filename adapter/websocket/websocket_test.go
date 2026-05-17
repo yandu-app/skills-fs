@@ -665,3 +665,28 @@ func TestWebSocketMetricsEndpoint(t *testing.T) {
 		t.Fatalf("expected prometheus latency metric, got:\n%s", body)
 	}
 }
+
+func TestErrorCode(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want int
+	}{
+		{"ENOENT", &core.PosixError{Code: core.ENOENT}, http.StatusNotFound},
+		{"EACCES", &core.PosixError{Code: core.EACCES}, http.StatusForbidden},
+		{"EEXIST", &core.PosixError{Code: core.EEXIST}, http.StatusConflict},
+		{"EINVAL", &core.PosixError{Code: core.EINVAL}, http.StatusBadRequest},
+		{"ETIMEDOUT", &core.PosixError{Code: core.ETIMEDOUT}, http.StatusRequestTimeout},
+		{"unmapped posix", &core.PosixError{Code: core.EIO}, http.StatusInternalServerError},
+		{"plain error", io.EOF, http.StatusInternalServerError},
+		{"nil", nil, http.StatusInternalServerError},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := errorCode(tc.err)
+			if got != tc.want {
+				t.Fatalf("errorCode(%v) = %d, want %d", tc.err, got, tc.want)
+			}
+		})
+	}
+}
