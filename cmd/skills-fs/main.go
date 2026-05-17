@@ -110,18 +110,12 @@ func maybeDaemonize(daemon bool, pidfile string) bool {
 		}
 		args = append(args, a)
 	}
-	cmd, err := os.StartProcess(args[0], args, &os.ProcAttr{
-		Files: []*os.File{nil, nil, nil},
-		Sys:   &syscall.SysProcAttr{Setsid: true},
-	})
+	pid, err := startDaemon(args, pidfile)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "daemonize: %v\n", err)
 		os.Exit(1)
 	}
-	if pidfile != "" {
-		os.WriteFile(pidfile, []byte(fmt.Sprintf("%d\n", cmd.Pid)), 0644)
-	}
-	fmt.Printf("daemon started pid=%d\n", cmd.Pid)
+	fmt.Printf("daemon started pid=%d\n", pid)
 	return true
 }
 
@@ -201,24 +195,13 @@ func cmdWebDAV(args []string) int {
 	}
 	slog.Info("webdav listening", "addr", server.Addr())
 
-	if *configPath != "" {
-		reloadCh := make(chan os.Signal, 1)
-		signal.Notify(reloadCh, syscall.SIGHUP)
-		go func() {
-			for range reloadCh {
-				cfg, err := LoadConfig(*configPath)
-				if err != nil {
-					slog.Error("reload config load", "err", err)
-					continue
-				}
-				if err := cfg.Reload(fsys); err != nil {
-					slog.Error("reload fs", "err", err)
-					continue
-				}
-				slog.Info("config reloaded")
-			}
-		}()
-	}
+	setupConfigReload(*configPath, func() error {
+		cfg, err := LoadConfig(*configPath)
+		if err != nil {
+			return err
+		}
+		return cfg.Reload(fsys)
+	})
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
@@ -292,24 +275,13 @@ func cmdWebSocket(args []string) int {
 	}
 	slog.Info("websocket listening", "addr", server.Addr())
 
-	if *configPath != "" {
-		reloadCh := make(chan os.Signal, 1)
-		signal.Notify(reloadCh, syscall.SIGHUP)
-		go func() {
-			for range reloadCh {
-				cfg, err := LoadConfig(*configPath)
-				if err != nil {
-					slog.Error("reload config load", "err", err)
-					continue
-				}
-				if err := cfg.Reload(fsys); err != nil {
-					slog.Error("reload fs", "err", err)
-					continue
-				}
-				slog.Info("config reloaded")
-			}
-		}()
-	}
+	setupConfigReload(*configPath, func() error {
+		cfg, err := LoadConfig(*configPath)
+		if err != nil {
+			return err
+		}
+		return cfg.Reload(fsys)
+	})
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
