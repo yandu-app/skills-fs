@@ -196,6 +196,25 @@ func cmdWebDAV(args []string) int {
 	}
 	slog.Info("webdav listening", "addr", server.Addr())
 
+	if *configPath != "" {
+		reloadCh := make(chan os.Signal, 1)
+		signal.Notify(reloadCh, syscall.SIGHUP)
+		go func() {
+			for range reloadCh {
+				cfg, err := LoadConfig(*configPath)
+				if err != nil {
+					slog.Error("reload config load", "err", err)
+					continue
+				}
+				if err := cfg.Reload(fsys); err != nil {
+					slog.Error("reload fs", "err", err)
+					continue
+				}
+				slog.Info("config reloaded")
+			}
+		}()
+	}
+
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	<-sigCh
@@ -267,6 +286,25 @@ func cmdWebSocket(args []string) int {
 		return 1
 	}
 	slog.Info("websocket listening", "addr", server.Addr())
+
+	if *configPath != "" {
+		reloadCh := make(chan os.Signal, 1)
+		signal.Notify(reloadCh, syscall.SIGHUP)
+		go func() {
+			for range reloadCh {
+				cfg, err := LoadConfig(*configPath)
+				if err != nil {
+					slog.Error("reload config load", "err", err)
+					continue
+				}
+				if err := cfg.Reload(fsys); err != nil {
+					slog.Error("reload fs", "err", err)
+					continue
+				}
+				slog.Info("config reloaded")
+			}
+		}()
+	}
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
