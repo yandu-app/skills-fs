@@ -227,6 +227,26 @@ func nextRoute(n *routeNode, segment string) (*routeNode, string, bool) {
 	return nil, "", false
 }
 
+// snapshot walks the route trie and returns a copy of every mounted entry.
+func (r *router) snapshot() []MountEntry {
+	var out []MountEntry
+	var walk func(prefix string, n *routeNode)
+	walk = func(prefix string, n *routeNode) {
+		if n.mount != nil {
+			out = append(out, *n.mount)
+		}
+		for name, child := range n.static {
+			p := prefix + "/" + name
+			walk(p, child)
+		}
+		if n.param != nil {
+			walk(prefix+"/:"+n.paramKey, n.param)
+		}
+	}
+	walk("", &r.root)
+	return out
+}
+
 func cleanParts(path string) ([]string, error) {
 	if path == "" || path[0] != '/' {
 		return nil, posix(EINVAL, OpStat, path, nil)

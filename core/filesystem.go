@@ -440,6 +440,29 @@ func (fs *FileSystem) ResolveParams(path string) (MountEntry, ParamSet, error) {
 	return *rm.mount, rm.params, nil
 }
 
+// Snapshot returns a copy of every mounted entry in the namespace.
+func (fs *FileSystem) Snapshot() []MountEntry {
+	fs.mu.RLock()
+	defer fs.mu.RUnlock()
+	return fs.router.snapshot()
+}
+
+// Restore mounts a slice of entries, clearing existing mounts first.
+// It returns the first error encountered without rolling back.
+func (fs *FileSystem) Restore(entries []MountEntry) error {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	for _, e := range fs.router.snapshot() {
+		_, _ = fs.router.remove(e.Path)
+	}
+	for _, e := range entries {
+		if _, err := fs.router.add(e); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // ReadLink returns the target of a symlink without following it.
 func (fs *FileSystem) ReadLink(path string) (string, error) {
 	fs.mu.RLock()
