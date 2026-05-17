@@ -50,6 +50,9 @@ func (s *Server) Mount(ctx context.Context) error {
 		Handler:   s.handleWS,
 	}
 	handler := middleware.CORS(s.opts.CORSOrigins)(wsSrv)
+	if cl := middleware.NewConnLimiter(s.opts.MaxConnections); cl != nil {
+		handler = middleware.ConnLimit(cl)(handler)
+	}
 	mux.Handle("/", handler)
 
 	s.srv = &http.Server{Addr: s.addr, Handler: mux}
