@@ -68,29 +68,35 @@ func (sm *streamManager) size(path string) int {
 // streamBuffer is a single-producer / single-consumer (or competing
 // multi-consumer) byte ring with configurable backpressure.
 type streamBuffer struct {
-	mu       sync.Mutex
-	cond     *sync.Cond
-	buf      []byte
-	r, w     int
-	count    int
-	capacity int
-	mode     BackpressureMode
-	closed   bool
+	mu          sync.Mutex
+	cond        *sync.Cond
+	buf         []byte
+	r, w        int
+	count       int
+	capacity    int
+	mode        BackpressureMode
+	maxChunkSize int
+	closed      bool
 }
 
 func newStreamBuffer(cfg *StreamConfig) *streamBuffer {
 	cap := defaultStreamCapacity
 	mode := BackpressureBlock
+	chunkSize := streamReadChunk
 	if cfg != nil {
 		if cfg.Capacity > 0 {
 			cap = cfg.Capacity
 		}
 		mode = cfg.Mode
+		if cfg.MaxChunkSize > 0 {
+			chunkSize = cfg.MaxChunkSize
+		}
 	}
 	b := &streamBuffer{
-		buf:      make([]byte, cap),
-		capacity: cap,
-		mode:     mode,
+		buf:          make([]byte, cap),
+		capacity:     cap,
+		mode:         mode,
+		maxChunkSize: chunkSize,
 	}
 	b.cond = sync.NewCond(&b.mu)
 	return b
@@ -141,20 +147,25 @@ func (b *streamBuffer) write(p []byte, nonblock bool) (int, error) {
 		return 0, posix(EPIPE, OpWrite, "", nil)
 	}
 
+	toWrite := p
+	if b.maxChunkSize > 0 && len(p) > b.maxChunkSize {
+		toWrite = p[:b.maxChunkSize]
+	}
+
 	switch b.mode {
 	case BackpressureError:
-		if len(p) > b.capacity-b.count {
+		if len(toWrite) > b.capacity-b.count {
 			return 0, posix(ENOSPC, OpWrite, "", nil)
 		}
 
 	case BackpressureDrop:
-		for len(p) > b.capacity-b.count {
+		for len(toWrite) > b.capacity-b.count {
 			b.r = (b.r + 1) % b.capacity
 			b.count--
 		}
 
 	case BackpressureBlock:
-		for len(p) > b.capacity-b.count && !b.closed {
+		for len(toWrite) > b.capacity-b.count && !b.closed {
 			if nonblock {
 				return 0, posix(EAGAIN, OpWrite, "", nil)
 			}
@@ -165,13 +176,13 @@ func (b *streamBuffer) write(p []byte, nonblock bool) (int, error) {
 		}
 	}
 
-	for i := range p {
-		b.buf[b.w] = p[i]
+	for i := range toWrite {
+		b.buf[b.w] = toWrite[i]
 		b.w = (b.w + 1) % b.capacity
 		b.count++
 	}
 	b.cond.Broadcast()
-	return len(p), nil
+	return len(toWrite), nil
 }
 
 func (b *streamBuffer) close() {

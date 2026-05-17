@@ -445,7 +445,11 @@ func (fs *FileSystem) Read(ctx context.Context, path string, caller CallerIdenti
 		b := fs.streams.getOrCreate(path, cfg)
 		bufPtr := fs.bufPool.Get().(*[]byte)
 		buf := *bufPtr
-		n, err := b.read(buf, false)
+		readBuf := buf
+		if cfg != nil && cfg.MaxChunkSize > 0 && cfg.MaxChunkSize < len(buf) {
+			readBuf = buf[:cfg.MaxChunkSize]
+		}
+		n, err := b.read(readBuf, false)
 		if err != nil {
 			fs.bufPool.Put(bufPtr)
 			return nil, err
@@ -515,9 +519,12 @@ func (fs *FileSystem) Write(ctx context.Context, path string, payload []byte, ca
 		cfg := m.Stream
 		fs.mu.RUnlock()
 		b := fs.streams.getOrCreate(path, cfg)
-		_, err := b.write(payload, false)
-		if err != nil {
-			return err
+		for len(payload) > 0 {
+			n, err := b.write(payload, false)
+			if err != nil {
+				return err
+			}
+			payload = payload[n:]
 		}
 		fs.events.emit(Event{Path: path, Kind: EventWrite})
 		return nil
