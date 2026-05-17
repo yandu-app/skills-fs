@@ -337,6 +337,14 @@ func (s *Server) handleCopy(w http.ResponseWriter, r *http.Request, src string, 
 		http.Error(w, "bad destination", http.StatusBadRequest)
 		return
 	}
+	if !s.allowOverwrite(r, dst, caller) {
+		http.Error(w, "precondition failed", http.StatusPreconditionFailed)
+		return
+	}
+	// Remove existing destination before overwriting.
+	if _, stErr := s.fs.Stat(dst, caller); stErr == nil {
+		_ = s.fs.Unmount(dst)
+	}
 	if err := s.copyResource(src, dst, caller); err != nil {
 		s.writeError(w, err)
 		return
@@ -354,6 +362,14 @@ func (s *Server) handleMove(w http.ResponseWriter, r *http.Request, src string, 
 		http.Error(w, "bad destination", http.StatusBadRequest)
 		return
 	}
+	if !s.allowOverwrite(r, dst, caller) {
+		http.Error(w, "precondition failed", http.StatusPreconditionFailed)
+		return
+	}
+	// Remove existing destination before overwriting.
+	if _, stErr := s.fs.Stat(dst, caller); stErr == nil {
+		_ = s.fs.Unmount(dst)
+	}
 	if err := s.copyResource(src, dst, caller); err != nil {
 		s.writeError(w, err)
 		return
@@ -363,6 +379,20 @@ func (s *Server) handleMove(w http.ResponseWriter, r *http.Request, src string, 
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// allowOverwrite checks the Overwrite header (default "T").
+// Returns false only when Overwrite is "F" and the destination exists.
+func (s *Server) allowOverwrite(r *http.Request, dst string, caller core.CallerIdentity) bool {
+	ov := r.Header.Get("Overwrite")
+	if ov == "" || ov == "T" {
+		return true
+	}
+	if ov != "F" {
+		return true // unknown value defaults to allow
+	}
+	_, err := s.fs.Stat(dst, caller)
+	return err != nil // allow if destination does not exist
 }
 
 func (s *Server) destinationPath(r *http.Request) (string, error) {
