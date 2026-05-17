@@ -30,9 +30,11 @@ type subscriber struct {
 
 // eventBus multiplexes filesystem mutations to registered listeners.
 type eventBus struct {
-	mu   sync.RWMutex
-	subs map[uint64]subscriber
-	seq  atomic.Uint64
+	mu        sync.RWMutex
+	subs      map[uint64]subscriber
+	seq       atomic.Uint64
+	emitted   atomic.Uint64
+	delivered atomic.Uint64
 }
 
 func newEventBus() *eventBus {
@@ -64,11 +66,13 @@ func (eb *eventBus) emit(e Event) {
 		subs = append(subs, s)
 	}
 	eb.mu.RUnlock()
+	eb.emitted.Add(1)
 	for _, s := range subs {
 		if s.prefix != "" && !strings.HasPrefix(e.Path, s.prefix) {
 			continue
 		}
 		s.fn(e)
+		eb.delivered.Add(1)
 	}
 }
 
