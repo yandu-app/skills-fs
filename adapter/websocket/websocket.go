@@ -39,6 +39,11 @@ func (s *Server) Options() adapter.MountOptions { return s.opts }
 
 func (s *Server) Mount(ctx context.Context) error {
 	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("ok\n"))
+	})
 	wsSrv := websocket.Server{
 		Handshake: s.checkOrigin,
 		Handler:   s.handleWS,
