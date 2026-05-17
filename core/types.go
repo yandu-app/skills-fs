@@ -144,3 +144,15 @@ type DirEntry struct {
 	Kind NodeKind
 	Mode uint32
 }
+
+type SnapshotDiff struct {
+	Added    []MountEntry
+	Removed  []MountEntry
+	Modified []MountEntryChange
+}
+
+type MountEntryChange struct {
+	Path string
+	Old  MountEntry
+	New  MountEntry
+}
