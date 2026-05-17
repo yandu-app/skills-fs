@@ -11,7 +11,7 @@ all: lint test vulncheck
 build:
 	go build -ldflags "$(LDFLAGS)" -o skills-fs ./cmd/skills-fs
 
-CORE_PKGS := $(shell go list ./... | grep -v '/adapter')
+CORE_PKGS := $(shell go list ./... | grep -v '/adapter' | grep -v '/examples/' | grep -v '/cmd/')
 
 test:
 	GOCACHE=$(GOCACHE) go test ./...
