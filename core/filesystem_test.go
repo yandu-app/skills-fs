@@ -1920,3 +1920,62 @@ func (p *healthyProvider) Invoke(ctx context.Context, action string, params map[
 func (p *healthyProvider) HealthCheck(ctx context.Context) error {
 	return p.err
 }
+
+func TestStatReservedPaths(t *testing.T) {
+	fs := NewFS(GlobalConfig{})
+
+	st, err := fs.Stat("/sys", CallerIdentity{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Kind != KindDir {
+		t.Fatalf("expected /sys to be dir, got %s", st.Kind)
+	}
+
+	st, err = fs.Stat("/sys/metrics", CallerIdentity{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Kind != KindBlob {
+		t.Fatalf("expected /sys/metrics to be blob, got %s", st.Kind)
+	}
+}
+
+func TestStatSkillDir(t *testing.T) {
+	root := t.TempDir()
+	fs := NewFS(GlobalConfig{SkillsRoot: root})
+	if err := fs.skills.Generate(SkillConfig{
+		Name:        "test-skill",
+		Description: "d",
+		Enabled:     true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	st, err := fs.Stat("/skills/test-skill", CallerIdentity{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Kind != KindDir {
+		t.Fatalf("expected skill dir, got %s", st.Kind)
+	}
+}
+
+func TestStatSkillFileDeleted(t *testing.T) {
+	root := t.TempDir()
+	fs := NewFS(GlobalConfig{SkillsRoot: root})
+	if err := fs.skills.Generate(SkillConfig{
+		Name:        "test-skill",
+		Description: "d",
+		Enabled:     true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(root, "test-skill", "SKILL.md")); err != nil {
+		t.Fatal(err)
+	}
+	_, err := fs.Stat("/skills/test-skill/SKILL.md", CallerIdentity{})
+	if err == nil {
+		t.Fatal("expected error when skill file is missing")
+	}
+}
