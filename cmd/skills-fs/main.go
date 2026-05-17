@@ -28,6 +28,8 @@ func main() {
 		os.Exit(cmdWebDAV(os.Args[2:]))
 	case "fuse":
 		os.Exit(cmdFUSE(os.Args[2:]))
+	case "validate":
+		os.Exit(cmdValidate(os.Args[2:]))
 	case "version":
 		fmt.Println(version)
 	default:
@@ -41,6 +43,7 @@ func usage() {
 	fmt.Fprintf(os.Stderr, "Commands:\n")
 	fmt.Fprintf(os.Stderr, "  webdav   Start WebDAV server\n")
 	fmt.Fprintf(os.Stderr, "  fuse     Mount FUSE filesystem (Linux only)\n")
+	fmt.Fprintf(os.Stderr, "  validate Validate configuration file\n")
 	fmt.Fprintf(os.Stderr, "  version  Print version\n")
 }
 
@@ -191,5 +194,32 @@ func cmdFUSE(args []string) int {
 		return 1
 	}
 	fsys.Shutdown(context.Background())
+	return 0
+}
+
+func cmdValidate(args []string) int {
+	fs := flag.NewFlagSet("validate", flag.ExitOnError)
+	configPath := fs.String("config", "", "Path to JSON config file (required)")
+	_ = fs.Parse(args)
+
+	if *configPath == "" {
+		fmt.Fprintln(os.Stderr, "Usage: skills-fs validate -config <path>")
+		return 1
+	}
+
+	cfg, err := LoadConfig(*configPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "config load error: %v\n", err)
+		return 1
+	}
+
+	fsys, err := cfg.BuildFS()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "fs build error: %v\n", err)
+		return 1
+	}
+	fsys.Shutdown(context.Background())
+
+	fmt.Println("configuration valid")
 	return 0
 }
