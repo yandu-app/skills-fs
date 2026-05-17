@@ -15,6 +15,7 @@ import (
 	"github.com/skills-fs/skills-fs/adapter"
 	"github.com/skills-fs/skills-fs/adapter/fuse"
 	"github.com/skills-fs/skills-fs/adapter/webdav"
+	"github.com/skills-fs/skills-fs/adapter/websocket"
 	"github.com/skills-fs/skills-fs/core"
 )
 
@@ -35,6 +36,8 @@ func main() {
 	switch os.Args[1] {
 	case "webdav":
 		os.Exit(cmdWebDAV(os.Args[2:]))
+	case "websocket":
+		os.Exit(cmdWebSocket(os.Args[2:]))
 	case "fuse":
 		os.Exit(cmdFUSE(os.Args[2:]))
 	case "validate":
@@ -50,10 +53,11 @@ func main() {
 func usage() {
 	fmt.Fprintf(os.Stderr, "Usage: %s <command> [options]\n\n", os.Args[0])
 	fmt.Fprintf(os.Stderr, "Commands:\n")
-	fmt.Fprintf(os.Stderr, "  webdav   Start WebDAV server\n")
-	fmt.Fprintf(os.Stderr, "  fuse     Mount FUSE filesystem (Linux only)\n")
-	fmt.Fprintf(os.Stderr, "  validate Validate configuration file\n")
-	fmt.Fprintf(os.Stderr, "  version  Print version\n")
+	fmt.Fprintf(os.Stderr, "  webdav    Start WebDAV server\n")
+	fmt.Fprintf(os.Stderr, "  websocket Start WebSocket server\n")
+	fmt.Fprintf(os.Stderr, "  fuse      Mount FUSE filesystem (Linux only)\n")
+	fmt.Fprintf(os.Stderr, "  validate  Validate configuration file\n")
+	fmt.Fprintf(os.Stderr, "  version   Print version\n")
 }
 
 func printVersion(w io.Writer) {
@@ -191,6 +195,78 @@ func cmdWebDAV(args []string) int {
 		return 1
 	}
 	slog.Info("webdav listening", "addr", server.Addr())
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	<-sigCh
+
+	slog.Info("shutting down")
+	if err := server.Unmount(context.Background()); err != nil {
+		slog.Error("unmount", "err", err)
+		return 1
+	}
+	fsys.Shutdown(context.Background())
+	return 0
+}
+
+func cmdWebSocket(args []string) int {
+	fs := flag.NewFlagSet("websocket", flag.ExitOnError)
+	addr := fs.String("addr", ":8081", "WebSocket listen address")
+	readOnly := fs.Bool("readonly", false, "Read-only mode")
+	configPath := fs.String("config", "", "Path to JSON config file")
+	logLevel := fs.String("log-level", "info", "Log level (debug, info, warn, error)")
+	logFile := fs.String("log-file", "", "Path to log file")
+	daemon := fs.Bool("daemon", false, "Run as background daemon")
+	pidfile := fs.String("pidfile", "", "Path to PID file")
+	allowedOrigins := fs.String("allowed-origins", "", "Comma-separated allowed origins (empty = allow all)")
+	corsOrigins := fs.String("cors-origins", "", "Comma-separated CORS origins (empty = allow all)")
+	maxConns := fs.Int("max-connections", 0, "Max concurrent connections (0 = unlimited)")
+	debug := fs.Bool("debug", false, "Enable /debug/pprof endpoints")
+	shutdownTimeout := fs.Duration("shutdown-timeout", adapter.DefaultShutdownTimeout, "Graceful shutdown timeout")
+	_ = fs.Parse(args)
+
+	if maybeDaemonize(*daemon, *pidfile) {
+		return 0
+	}
+
+	logger := setupLogger(*logLevel, *logFile)
+	slog.SetDefault(logger)
+
+	fsys, err := buildFS(*configPath)
+	if err != nil {
+		slog.Error("build fs", "err", err)
+		return 1
+	}
+
+	var origins []string
+	if *allowedOrigins != "" {
+		origins = strings.Split(*allowedOrigins, ",")
+		for i := range origins {
+			origins[i] = strings.TrimSpace(origins[i])
+		}
+	}
+	var cors []string
+	if *corsOrigins != "" {
+		cors = strings.Split(*corsOrigins, ",")
+		for i := range cors {
+			cors[i] = strings.TrimSpace(cors[i])
+		}
+	}
+
+	opts := adapter.MountOptions{
+		ReadOnly:        *readOnly,
+		AllowedOrigins:  origins,
+		CORSOrigins:     cors,
+		MaxConnections:  *maxConns,
+		Debug:           *debug,
+		ShutdownTimeout: *shutdownTimeout,
+	}
+	server := websocket.New(fsys, *addr, opts)
+	if err := server.Mount(context.Background()); err != nil {
+		slog.Error("mount", "err", err)
+		return 1
+	}
+	slog.Info("websocket listening", "addr", server.Addr())
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
