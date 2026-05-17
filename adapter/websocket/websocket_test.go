@@ -273,6 +273,11 @@ func TestWebSocketConnectionCounter(t *testing.T) {
 	ws := dial(t, srv)
 	defer ws.Close()
 
+	// Wait for the server goroutine to increment the counter.
+	start := time.Now()
+	for srv.ActiveConnections() != 1 && time.Since(start) < time.Second {
+		time.Sleep(5 * time.Millisecond)
+	}
 	if srv.ActiveConnections() != 1 {
 		t.Fatalf("expected 1 connection, got %d", srv.ActiveConnections())
 	}
