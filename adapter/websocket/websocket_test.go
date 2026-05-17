@@ -163,6 +163,89 @@ func TestWebSocketDialTimeout(t *testing.T) {
 	}
 }
 
+func TestWebSocketReadBinary(t *testing.T) {
+	fs := core.NewFS(core.GlobalConfig{})
+	if err := fs.Mount("/blob", core.MountEntry{Kind: core.KindBlob, Mode: 0o666, BlobData: []byte("binary-data")}); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := New(fs, "127.0.0.1:0", adapter.MountOptions{})
+	if err := srv.Mount(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Unmount(context.Background())
+
+	origin := "http://" + srv.ln.Addr().String()
+	url := "ws://" + srv.ln.Addr().String() + "/"
+	ws, err := websocket.Dial(url, "", origin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.Close()
+
+	if err := websocket.JSON.Send(ws, WsMsg{Op: "read-binary", Path: "/blob"}); err != nil {
+		t.Fatal(err)
+	}
+	var reply WsReply
+	if err := websocket.JSON.Receive(ws, &reply); err != nil {
+		t.Fatal(err)
+	}
+	if reply.Op != "read-binary" {
+		t.Fatalf("unexpected reply op: %q", reply.Op)
+	}
+
+	var payload []byte
+	if err := websocket.Message.Receive(ws, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if string(payload) != "binary-data" {
+		t.Fatalf("expected binary-data, got %q", payload)
+	}
+}
+
+func TestWebSocketWriteBinary(t *testing.T) {
+	fs := core.NewFS(core.GlobalConfig{})
+	if err := fs.Mount("/blob", core.MountEntry{Kind: core.KindBlob, Mode: 0o666}); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := New(fs, "127.0.0.1:0", adapter.MountOptions{})
+	if err := srv.Mount(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Unmount(context.Background())
+
+	origin := "http://" + srv.ln.Addr().String()
+	url := "ws://" + srv.ln.Addr().String() + "/"
+	ws, err := websocket.Dial(url, "", origin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.Close()
+
+	if err := websocket.JSON.Send(ws, WsMsg{Op: "write-binary", Path: "/blob"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := websocket.Message.Send(ws, []byte("raw-bytes")); err != nil {
+		t.Fatal(err)
+	}
+	var reply WsReply
+	if err := websocket.JSON.Receive(ws, &reply); err != nil {
+		t.Fatal(err)
+	}
+	if reply.Error != "" {
+		t.Fatalf("unexpected error: %s", reply.Error)
+	}
+
+	data, err := fs.Read(context.Background(), "/blob", core.CallerIdentity{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "raw-bytes" {
+		t.Fatalf("expected raw-bytes, got %q", data)
+	}
+}
+
 func TestWebSocketHealthz(t *testing.T) {
 	fs := core.NewFS(core.GlobalConfig{})
 	srv := New(fs, "127.0.0.1:0", adapter.MountOptions{})
