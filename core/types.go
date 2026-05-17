@@ -128,6 +128,12 @@ type Provider interface {
 	Invoke(ctx context.Context, action string, params map[string]interface{}) (*ProviderResult, error)
 }
 
+// HealthCheckable is an optional interface providers may implement
+// to support explicit health check probes.
+type HealthCheckable interface {
+	HealthCheck(ctx context.Context) error
+}
+
 type ProviderResult struct {
 	Data        []byte
 	Meta        map[string]string

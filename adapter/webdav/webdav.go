@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -272,9 +273,13 @@ func (s *Server) handlePut(w http.ResponseWriter, r *http.Request, path string, 
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	status := map[string]interface{}{
+		"status":    "ok",
+		"providers": s.fs.ProviderHealth(r.Context()),
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("ok\n"))
+	json.NewEncoder(w).Encode(status)
 }
 
 func (s *Server) handleOptions(w http.ResponseWriter, r *http.Request) {

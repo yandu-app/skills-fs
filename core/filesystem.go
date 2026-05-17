@@ -119,6 +119,27 @@ func (fs *FileSystem) RegisterProvider(p Provider) error {
 	return nil
 }
 
+// ProviderHealth returns a map of provider ID to health status string.
+// If a provider implements HealthCheckable, its HealthCheck is called.
+// Otherwise it is reported as "unknown".
+func (fs *FileSystem) ProviderHealth(ctx context.Context) map[string]string {
+	fs.mu.RLock()
+	defer fs.mu.RUnlock()
+	result := make(map[string]string, len(fs.providers))
+	for id, p := range fs.providers {
+		if hc, ok := p.(HealthCheckable); ok {
+			if err := hc.HealthCheck(ctx); err != nil {
+				result[id] = "unhealthy: " + err.Error()
+				continue
+			}
+			result[id] = "healthy"
+		} else {
+			result[id] = "unknown"
+		}
+	}
+	return result
+}
+
 func (fs *FileSystem) RegisterNotifier(fn func(Event), prefix string) func() {
 	id := fs.events.register(fn, prefix)
 	return func() { fs.events.unregister(id) }
