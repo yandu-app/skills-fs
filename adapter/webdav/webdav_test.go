@@ -2266,3 +2266,100 @@ func TestWebDAVCopyLink(t *testing.T) {
 		t.Fatalf("expected link, got %s", stat.Kind)
 	}
 }
+
+func TestWebDAVUnlock(t *testing.T) {
+	fs := core.NewFS(core.GlobalConfig{})
+	if err := fs.Mount("/blob", core.MountEntry{Kind: core.KindBlob, Mode: 0o644, BlobData: []byte("x")}); err != nil {
+		t.Fatal(err)
+	}
+	server := New(fs, "127.0.0.1:0", adapter.MountOptions{})
+	if err := server.Mount(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Unmount(context.Background())
+
+	baseURL := "http://" + server.ln.Addr().String()
+	req, _ := http.NewRequest("UNLOCK", baseURL+"/blob", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", resp.StatusCode)
+	}
+}
+
+func TestWebDAVCopyIfMatchSuccess(t *testing.T) {
+	fs := core.NewFS(core.GlobalConfig{})
+	if err := fs.Mount("/src", core.MountEntry{Kind: core.KindBlob, Mode: 0o644, BlobData: []byte("hello")}); err != nil {
+		t.Fatal(err)
+	}
+	server := New(fs, "127.0.0.1:0", adapter.MountOptions{})
+	if err := server.Mount(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Unmount(context.Background())
+
+	baseURL := "http://" + server.ln.Addr().String()
+	req, _ := http.NewRequest("COPY", baseURL+"/src", nil)
+	req.Header.Set("Destination", baseURL+"/dst")
+	req.Header.Set("If-Match", etag([]byte("hello")))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", resp.StatusCode)
+	}
+}
+
+func TestWebDAVCopyIfNoneMatchSpecific(t *testing.T) {
+	fs := core.NewFS(core.GlobalConfig{})
+	if err := fs.Mount("/src", core.MountEntry{Kind: core.KindBlob, Mode: 0o644, BlobData: []byte("src")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Mount("/dst", core.MountEntry{Kind: core.KindBlob, Mode: 0o644, BlobData: []byte("dst")}); err != nil {
+		t.Fatal(err)
+	}
+	server := New(fs, "127.0.0.1:0", adapter.MountOptions{})
+	if err := server.Mount(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Unmount(context.Background())
+
+	baseURL := "http://" + server.ln.Addr().String()
+	req, _ := http.NewRequest("COPY", baseURL+"/src", nil)
+	req.Header.Set("Destination", baseURL+"/dst")
+	req.Header.Set("If-None-Match", etag([]byte("dst")))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusPreconditionFailed {
+		t.Fatalf("expected 412, got %d", resp.StatusCode)
+	}
+}
+
+func TestWebDAVWriteErrorMapping(t *testing.T) {
+	fs := core.NewFS(core.GlobalConfig{})
+	server := New(fs, "127.0.0.1:0", adapter.MountOptions{})
+	if err := server.Mount(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Unmount(context.Background())
+
+	baseURL := "http://" + server.ln.Addr().String()
+	// Writing to a non-existent path triggers ENOENT → 404.
+	req, _ := http.NewRequest("PUT", baseURL+"/no-parent/missing", strings.NewReader("x"))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected 404 for ENOENT, got %d", resp.StatusCode)
+	}
+}
