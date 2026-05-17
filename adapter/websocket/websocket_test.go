@@ -74,12 +74,15 @@ func TestWebSocketSubscribe(t *testing.T) {
 	}
 	defer ws.Close()
 
-	if err := websocket.JSON.Send(ws, WsMsg{Op: "subscribe", Prefix: "/blob"}); err != nil {
+	if err := websocket.JSON.Send(ws, WsMsg{Op: "subscribe", Prefix: "/blob", SubID: "sub1"}); err != nil {
 		t.Fatal(err)
 	}
 	var reply WsReply
 	if err := websocket.JSON.Receive(ws, &reply); err != nil {
 		t.Fatal(err)
+	}
+	if reply.SubID != "sub1" {
+		t.Fatalf("expected SubID sub1, got %q", reply.SubID)
 	}
 
 	if err := fs.Write(context.Background(), "/blob", []byte("x"), core.CallerIdentity{}); err != nil {
@@ -92,6 +95,9 @@ func TestWebSocketSubscribe(t *testing.T) {
 	}
 	if reply.Op != "event" || reply.Event == nil {
 		t.Fatalf("expected event reply, got %+v", reply)
+	}
+	if reply.SubID != "sub1" {
+		t.Fatalf("expected event SubID sub1, got %q", reply.SubID)
 	}
 }
 
@@ -346,5 +352,111 @@ func TestWebSocketMaxPayload(t *testing.T) {
 	if err := websocket.JSON.Receive(ws, &reply); err != nil {
 		// Receiving a too-large frame should close the connection.
 		t.Logf("receive error (expected): %v", err)
+	}
+}
+
+func TestWebSocketMultiSubscribe(t *testing.T) {
+	fs := core.NewFS(core.GlobalConfig{})
+	if err := fs.Mount("/a", core.MountEntry{Kind: core.KindBlob, Mode: 0o666}); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Mount("/b", core.MountEntry{Kind: core.KindBlob, Mode: 0o666}); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := New(fs, "127.0.0.1:0", adapter.MountOptions{})
+	if err := srv.Mount(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Unmount(context.Background())
+
+	origin := "http://" + srv.ln.Addr().String()
+	url := "ws://" + srv.ln.Addr().String() + "/"
+	ws, err := websocket.Dial(url, "", origin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.Close()
+
+	// Subscribe to /a and /b with different IDs.
+	if err := websocket.JSON.Send(ws, WsMsg{Op: "subscribe", Prefix: "/a", SubID: "sub-a"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := websocket.JSON.Send(ws, WsMsg{Op: "subscribe", Prefix: "/b", SubID: "sub-b"}); err != nil {
+		t.Fatal(err)
+	}
+	var reply WsReply
+	if err := websocket.JSON.Receive(ws, &reply); err != nil {
+		t.Fatal(err)
+	}
+	if reply.SubID != "sub-a" {
+		t.Fatalf("expected sub-a ack, got %q", reply.SubID)
+	}
+	if err := websocket.JSON.Receive(ws, &reply); err != nil {
+		t.Fatal(err)
+	}
+	if reply.SubID != "sub-b" {
+		t.Fatalf("expected sub-b ack, got %q", reply.SubID)
+	}
+
+	// Write to /a; only sub-a should receive.
+	if err := fs.Write(context.Background(), "/a", []byte("x"), core.CallerIdentity{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := websocket.JSON.Receive(ws, &reply); err != nil {
+		t.Fatal(err)
+	}
+	if reply.Op != "event" || reply.SubID != "sub-a" {
+		t.Fatalf("expected sub-a event, got %+v", reply)
+	}
+
+	// Unsubscribe sub-a, then write to /a again.
+	if err := websocket.JSON.Send(ws, WsMsg{Op: "unsubscribe", SubID: "sub-a"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := websocket.JSON.Receive(ws, &reply); err != nil {
+		t.Fatal(err)
+	}
+	if reply.SubID != "sub-a" {
+		t.Fatalf("expected sub-a unsub ack, got %q", reply.SubID)
+	}
+
+	if err := fs.Write(context.Background(), "/a", []byte("y"), core.CallerIdentity{}); err != nil {
+		t.Fatal(err)
+	}
+	ws.SetDeadline(time.Now().Add(500 * time.Millisecond))
+	if err := websocket.JSON.Receive(ws, &reply); err == nil {
+		t.Fatalf("expected timeout after unsub, got %+v", reply)
+	}
+}
+
+func TestWebSocketSubscribeMissingID(t *testing.T) {
+	fs := core.NewFS(core.GlobalConfig{})
+	srv := New(fs, "127.0.0.1:0", adapter.MountOptions{})
+	if err := srv.Mount(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Unmount(context.Background())
+
+	origin := "http://" + srv.ln.Addr().String()
+	url := "ws://" + srv.ln.Addr().String() + "/"
+	ws, err := websocket.Dial(url, "", origin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.Close()
+
+	if err := websocket.JSON.Send(ws, WsMsg{Op: "subscribe", Prefix: "/"}); err != nil {
+		t.Fatal(err)
+	}
+	var reply WsReply
+	if err := websocket.JSON.Receive(ws, &reply); err != nil {
+		t.Fatal(err)
+	}
+	if reply.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", reply.Code)
+	}
+	if reply.Error != "missing sub_id" {
+		t.Fatalf("expected missing sub_id error, got %q", reply.Error)
 	}
 }

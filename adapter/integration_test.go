@@ -66,7 +66,7 @@ func TestWebDAVAndWebSocketIntegration(t *testing.T) {
 	}
 
 	// Subscribe to events via WebSocket.
-	if err := websocket.JSON.Send(ws, wsadapter.WsMsg{Op: "subscribe", Prefix: "/blob"}); err != nil {
+	if err := websocket.JSON.Send(ws, wsadapter.WsMsg{Op: "subscribe", Prefix: "/blob", SubID: "sub1"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := websocket.JSON.Receive(ws, &reply); err != nil {
