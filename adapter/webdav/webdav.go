@@ -183,11 +183,35 @@ func (s *Server) handleOptions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleLock(w http.ResponseWriter, r *http.Request, path string, caller core.CallerIdentity) {
-	http.Error(w, "not implemented", http.StatusNotImplemented)
+	if s.opts.ReadOnly {
+		http.Error(w, "read-only filesystem", http.StatusForbidden)
+		return
+	}
+	// Return a fake lock token so clients that require locking can proceed.
+	token := fmt.Sprintf("opaquelocktoken:%d", time.Now().UnixNano())
+	lock := lockDiscovery{
+		XmlnsD: "DAV:",
+		ActiveLock: activeLock{
+			LockType:  lockType{Write: ""},
+			LockScope: lockScope{Exclusive: ""},
+			Depth:     "infinity",
+			Owner:     "skills-fs",
+			Timeout:   "Second-3600",
+			LockToken: lockToken{Href: token},
+		},
+	}
+	w.Header().Set("Content-Type", "text/xml; charset=utf-8")
+	w.Header().Set("Lock-Token", "<"+token+">")
+	w.WriteHeader(http.StatusOK)
+	xml.NewEncoder(w).Encode(lock)
 }
 
 func (s *Server) handleUnlock(w http.ResponseWriter, r *http.Request, path string, caller core.CallerIdentity) {
-	http.Error(w, "not implemented", http.StatusNotImplemented)
+	if s.opts.ReadOnly {
+		http.Error(w, "read-only filesystem", http.StatusForbidden)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) handleMkcol(w http.ResponseWriter, r *http.Request, path string, caller core.CallerIdentity) {
@@ -394,6 +418,34 @@ type prop struct {
 type resourceType struct {
 	XMLName    xml.Name `xml:"D:resourcetype"`
 	Collection string   `xml:"D:collection,omitempty"`
+}
+
+// Lock XML structures.
+type lockDiscovery struct {
+	XMLName    xml.Name   `xml:"D:prop"`
+	XmlnsD     string     `xml:"xmlns:D,attr"`
+	ActiveLock activeLock `xml:"D:lockdiscovery>D:activelock"`
+}
+
+type activeLock struct {
+	LockType  lockType  `xml:"D:locktype>D:write"`
+	LockScope lockScope `xml:"D:lockscope>D:exclusive"`
+	Depth     string    `xml:"D:depth"`
+	Owner     string    `xml:"D:owner"`
+	Timeout   string    `xml:"D:timeout"`
+	LockToken lockToken `xml:"D:locktoken>D:href"`
+}
+
+type lockType struct {
+	Write string `xml:"D:write,omitempty"`
+}
+
+type lockScope struct {
+	Exclusive string `xml:"D:exclusive,omitempty"`
+}
+
+type lockToken struct {
+	Href string `xml:"D:href"`
 }
 
 func (s *Server) callerFromRequest(r *http.Request) core.CallerIdentity {
