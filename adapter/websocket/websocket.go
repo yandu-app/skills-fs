@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strings"
+	"time"
 
 	"golang.org/x/net/websocket"
 	"github.com/skills-fs/skills-fs/adapter"
@@ -36,7 +38,11 @@ func (s *Server) Options() adapter.MountOptions { return s.opts }
 
 func (s *Server) Mount(ctx context.Context) error {
 	mux := http.NewServeMux()
-	mux.Handle("/", websocket.Handler(s.handleWS))
+	wsSrv := websocket.Server{
+		Handshake: s.checkOrigin,
+		Handler:   s.handleWS,
+	}
+	mux.Handle("/", wsSrv)
 
 	s.srv = &http.Server{Addr: s.addr, Handler: mux}
 	ln, err := net.Listen("tcp", s.addr)
@@ -46,6 +52,22 @@ func (s *Server) Mount(ctx context.Context) error {
 	s.ln = ln
 	go s.srv.Serve(ln)
 	return nil
+}
+
+func (s *Server) checkOrigin(cfg *websocket.Config, req *http.Request) error {
+	if len(s.opts.AllowedOrigins) == 0 {
+		return nil
+	}
+	origin := req.Header.Get("Origin")
+	if origin == "" {
+		origin = req.Header.Get("Sec-WebSocket-Origin")
+	}
+	for _, allowed := range s.opts.AllowedOrigins {
+		if strings.EqualFold(origin, allowed) {
+			return nil
+		}
+	}
+	return fmt.Errorf("origin %q not allowed", origin)
 }
 
 func (s *Server) Unmount(ctx context.Context) error {
@@ -77,6 +99,7 @@ type Evt struct {
 
 func (s *Server) handleWS(conn *websocket.Conn) {
 	defer conn.Close()
+	conn.MaxPayloadBytes = 64 * 1024 // 64 KiB max message size
 	var unsub func()
 	defer func() {
 		if unsub != nil {
@@ -85,6 +108,7 @@ func (s *Server) handleWS(conn *websocket.Conn) {
 	}()
 
 	for {
+		conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 		var msg WsMsg
 		if err := websocket.JSON.Receive(conn, &msg); err != nil {
 			return

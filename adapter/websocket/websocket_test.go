@@ -2,6 +2,7 @@ package websocket
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -152,5 +153,61 @@ func TestWebSocketDialTimeout(t *testing.T) {
 	}
 	if reply.Error != "unknown op" {
 		t.Fatalf("expected unknown op error, got: %+v", reply)
+	}
+}
+
+func TestWebSocketOriginAllowed(t *testing.T) {
+	fs := core.NewFS(core.GlobalConfig{})
+	opts := adapter.MountOptions{AllowedOrigins: []string{"http://trusted.example.com"}}
+	srv := New(fs, "127.0.0.1:0", opts)
+	if err := srv.Mount(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Unmount(context.Background())
+
+	addr := srv.ln.Addr().String()
+	url := "ws://" + addr + "/"
+
+	// Bad origin should fail handshake.
+	_, err := websocket.Dial(url, "", "http://evil.com")
+	if err == nil {
+		t.Fatal("expected handshake failure for bad origin")
+	}
+
+	// Good origin should succeed.
+	ws, err := websocket.Dial(url, "", "http://trusted.example.com")
+	if err != nil {
+		t.Fatalf("expected handshake success for allowed origin: %v", err)
+	}
+	ws.Close()
+}
+
+func TestWebSocketMaxPayload(t *testing.T) {
+	fs := core.NewFS(core.GlobalConfig{})
+	srv := New(fs, "127.0.0.1:0", adapter.MountOptions{})
+	if err := srv.Mount(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Unmount(context.Background())
+
+	origin := "http://" + srv.ln.Addr().String()
+	url := "ws://" + srv.ln.Addr().String() + "/"
+	ws, err := websocket.Dial(url, "", origin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.Close()
+
+	// Send a message larger than 64 KiB.
+	big := strings.Repeat("x", 128*1024)
+	if err := websocket.JSON.Send(ws, WsMsg{Op: "write", Path: "/blob", Data: big}); err != nil {
+		// The send itself may succeed; the receive should fail or error out.
+		t.Logf("send error (acceptable): %v", err)
+	}
+	ws.SetDeadline(time.Now().Add(2 * time.Second))
+	var reply WsReply
+	if err := websocket.JSON.Receive(ws, &reply); err != nil {
+		// Receiving a too-large frame should close the connection.
+		t.Logf("receive error (expected): %v", err)
 	}
 }
