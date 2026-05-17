@@ -15,6 +15,7 @@ type MountOptions struct {
 	TLSCertFile    string
 	TLSKeyFile     string
 	AllowedOrigins []string // empty = allow all (for WebSocket origin validation)
+	EnableGzip     bool     // compress GET/PROPFIND responses for WebDAV
 }
 
 type MountedFS interface {

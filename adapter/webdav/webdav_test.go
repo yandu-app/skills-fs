@@ -2,6 +2,7 @@ package webdav
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
@@ -16,6 +17,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -945,5 +947,60 @@ func TestWebDAVPathSanitization(t *testing.T) {
 		if got != tc.want {
 			t.Fatalf("sanitizePath(%q) = %q, want %q", tc.path, got, tc.want)
 		}
+	}
+}
+
+func TestWebDAVGzip(t *testing.T) {
+	fs := core.NewFS(core.GlobalConfig{})
+	big := strings.Repeat("hello-webdav-gzip-test-", 100)
+	if err := fs.Mount("/blob", core.MountEntry{Kind: core.KindBlob, Mode: 0o644, BlobData: []byte(big)}); err != nil {
+		t.Fatal(err)
+	}
+
+	server := New(fs, "127.0.0.1:0", adapter.MountOptions{EnableGzip: true})
+	if err := server.Mount(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Unmount(context.Background())
+
+	baseURL := "http://" + server.ln.Addr().String()
+
+	// Request without Accept-Encoding should not be compressed.
+	resp, err := http.Get(baseURL + "/blob")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if string(body) != big {
+		t.Fatal("uncompressed GET body mismatch")
+	}
+	if resp.Header.Get("Content-Encoding") == "gzip" {
+		t.Fatal("unexpected gzip without Accept-Encoding")
+	}
+
+	// Request with Accept-Encoding: gzip should be compressed.
+	req, _ := http.NewRequest(http.MethodGet, baseURL+"/blob", nil)
+	req.Header.Set("Accept-Encoding", "gzip")
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ = io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.Header.Get("Content-Encoding") != "gzip" {
+		t.Fatalf("expected gzip encoding, got %q", resp.Header.Get("Content-Encoding"))
+	}
+	gr, err := gzip.NewReader(bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	decompressed, err := io.ReadAll(gr)
+	gr.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(decompressed) != big {
+		t.Fatalf("decompressed body mismatch: got %d bytes, want %d", len(decompressed), len(big))
 	}
 }

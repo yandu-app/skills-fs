@@ -1,6 +1,7 @@
 package webdav
 
 import (
+	"compress/gzip"
 	"context"
 	"crypto/tls"
 	"encoding/base64"
@@ -108,6 +109,18 @@ func (s *Server) handleWebDAV(w http.ResponseWriter, r *http.Request) {
 	if path == "" {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
+	}
+
+	// Wrap writer with gzip for compressible methods when enabled.
+	if s.opts.EnableGzip && strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+		switch r.Method {
+		case http.MethodGet, "PROPFIND":
+			gzw := &gzipResponseWriter{ResponseWriter: w, Writer: gzip.NewWriter(w)}
+			gzw.Header().Set("Content-Encoding", "gzip")
+			gzw.Header().Del("Content-Length")
+			defer gzw.Close()
+			w = gzw
+		}
 	}
 
 	switch r.Method {
@@ -493,6 +506,30 @@ func (s *Server) writeError(w http.ResponseWriter, err error) {
 		return
 	}
 	http.Error(w, "internal error", http.StatusInternalServerError)
+}
+
+type gzipResponseWriter struct {
+	http.ResponseWriter
+	Writer *gzip.Writer
+	wrote  bool
+}
+
+func (gz *gzipResponseWriter) WriteHeader(code int) {
+	if !gz.wrote {
+		gz.wrote = true
+		gz.ResponseWriter.WriteHeader(code)
+	}
+}
+
+func (gz *gzipResponseWriter) Write(p []byte) (int, error) {
+	if !gz.wrote {
+		gz.WriteHeader(http.StatusOK)
+	}
+	return gz.Writer.Write(p)
+}
+
+func (gz *gzipResponseWriter) Close() error {
+	return gz.Writer.Close()
 }
 
 func contentTypeFromKind(kind core.NodeKind) string {
