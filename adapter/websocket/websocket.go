@@ -98,6 +98,7 @@ type WsMsg struct {
 	Path   string `json:"path"`
 	Data   string `json:"data,omitempty"`
 	Prefix string `json:"prefix,omitempty"`
+	SubID  string `json:"sub_id,omitempty"`
 }
 
 type WsReply struct {
@@ -107,6 +108,7 @@ type WsReply struct {
 	Error     string `json:"error,omitempty"`
 	Code      int    `json:"code,omitempty"`
 	Event     *Evt   `json:"event,omitempty"`
+	SubID     string `json:"sub_id,omitempty"`
 }
 
 type Evt struct {
@@ -138,9 +140,9 @@ func (s *Server) handleWS(conn *websocket.Conn) {
 	s.conns.Add(1)
 	defer s.conns.Add(-1)
 	conn.MaxPayloadBytes = 64 * 1024 // 64 KiB max message size
-	var unsub func()
+	subs := make(map[string]func())
 	defer func() {
-		if unsub != nil {
+		for _, unsub := range subs {
 			unsub()
 		}
 	}()
@@ -151,7 +153,7 @@ func (s *Server) handleWS(conn *websocket.Conn) {
 		if err := websocket.JSON.Receive(conn, &msg); err != nil {
 			return
 		}
-		reply := WsReply{Op: msg.Op, Path: msg.Path}
+		reply := WsReply{Op: msg.Op, Path: msg.Path, SubID: msg.SubID}
 		switch msg.Op {
 		case "read":
 			data, err := s.fs.Read(context.Background(), msg.Path, core.CallerIdentity{})
@@ -203,11 +205,17 @@ func (s *Server) handleWS(conn *websocket.Conn) {
 				reply.Code = errorCode(err)
 			}
 		case "subscribe":
-			if unsub != nil {
+			if msg.SubID == "" {
+				reply.Error = "missing sub_id"
+				reply.Code = http.StatusBadRequest
+				break
+			}
+			if unsub, ok := subs[msg.SubID]; ok {
 				unsub()
 			}
 			ch := make(chan core.Event, 16)
-			unsub = s.fs.RegisterNotifier(func(e core.Event) {
+			subID := msg.SubID
+			subs[subID] = s.fs.RegisterNotifier(func(e core.Event) {
 				select {
 				case ch <- e:
 				default:
@@ -216,15 +224,21 @@ func (s *Server) handleWS(conn *websocket.Conn) {
 			go func() {
 				for e := range ch {
 					websocket.JSON.Send(conn, WsReply{
-						Op: "event",
+						Op:    "event",
+						SubID: subID,
 						Event: &Evt{Path: e.Path, Kind: fmt.Sprint(e.Kind)},
 					})
 				}
 			}()
 		case "unsubscribe":
-			if unsub != nil {
+			if msg.SubID == "" {
+				reply.Error = "missing sub_id"
+				reply.Code = http.StatusBadRequest
+				break
+			}
+			if unsub, ok := subs[msg.SubID]; ok {
 				unsub()
-				unsub = nil
+				delete(subs, msg.SubID)
 			}
 		default:
 			reply.Error = "unknown op"
