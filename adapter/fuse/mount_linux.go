@@ -53,7 +53,7 @@ func (s *Server) Mount(ctx context.Context) error {
 	return nil
 }
 
-func (s *Server) Unmount(_ context.Context) error {
+func (s *Server) Unmount(ctx context.Context) error {
 	if s.state == nil {
 		return nil
 	}
@@ -61,7 +61,17 @@ func (s *Server) Unmount(_ context.Context) error {
 	if !ok || st.srv == nil {
 		return nil
 	}
-	return st.srv.Unmount()
+	// go-fuse Unmount is synchronous; use context for timeout only.
+	ctx, cancel := s.opts.ShutdownContext(ctx)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- st.srv.Unmount() }()
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // --- go-fuse filesystem implementation ---

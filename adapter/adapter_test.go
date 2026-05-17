@@ -5,6 +5,7 @@ import (
 	"errors"
 	"runtime"
 	"testing"
+	"time"
 
 	"github.com/skills-fs/skills-fs/adapter"
 	"github.com/skills-fs/skills-fs/adapter/fuse"
@@ -47,5 +48,53 @@ func TestWebDAVServer(t *testing.T) {
 	}
 	if err := server.Unmount(context.Background()); err != nil {
 		t.Fatalf("unexpected unmount error: %v", err)
+	}
+}
+
+func TestShutdownContextUsesDefault(t *testing.T) {
+	opts := adapter.MountOptions{}
+	ctx, cancel := opts.ShutdownContext(context.Background())
+	defer cancel()
+
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		t.Fatal("expected deadline to be set")
+	}
+	want := time.Now().Add(adapter.DefaultShutdownTimeout)
+	if deadline.After(want.Add(2*time.Second)) || deadline.Before(want.Add(-2*time.Second)) {
+		t.Fatalf("deadline too far from expected: got %v, want around %v", deadline, want)
+	}
+}
+
+func TestShutdownContextPreservesExistingDeadline(t *testing.T) {
+	opts := adapter.MountOptions{ShutdownTimeout: 5 * time.Second}
+	parent, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	ctx, ctxCancel := opts.ShutdownContext(parent)
+	defer ctxCancel()
+
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		t.Fatal("expected deadline")
+	}
+	// Should keep the parent's shorter deadline.
+	if time.Until(deadline) > 5*time.Second {
+		t.Fatal("expected parent's shorter deadline to be preserved")
+	}
+}
+
+func TestShutdownContextUsesCustomTimeout(t *testing.T) {
+	opts := adapter.MountOptions{ShutdownTimeout: 10 * time.Second}
+	ctx, cancel := opts.ShutdownContext(context.Background())
+	defer cancel()
+
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		t.Fatal("expected deadline")
+	}
+	want := time.Now().Add(10 * time.Second)
+	if deadline.After(want.Add(2*time.Second)) || deadline.Before(want.Add(-2*time.Second)) {
+		t.Fatalf("deadline mismatch: got %v", deadline)
 	}
 }
