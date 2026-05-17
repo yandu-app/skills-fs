@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/skills-fs/skills-fs/adapter"
@@ -120,6 +121,17 @@ func cmdWebDAV(args []string) int {
 	logFile := fs.String("log-file", "", "Path to log file")
 	daemon := fs.Bool("daemon", false, "Run as background daemon")
 	pidfile := fs.String("pidfile", "", "Path to PID file")
+	tlsCert := fs.String("tls-cert", "", "TLS certificate file")
+	tlsKey := fs.String("tls-key", "", "TLS key file")
+	corsOrigins := fs.String("cors-origins", "", "Comma-separated CORS origins (empty = allow all)")
+	rateLimitRPS := fs.Float64("rate-limit-rps", 0, "Per-IP rate limit requests/sec (0 = unlimited)")
+	rateLimitBurst := fs.Int("rate-limit-burst", 0, "Rate limit burst size (0 = match RPS)")
+	enableGzip := fs.Bool("gzip", false, "Enable gzip compression")
+	maxConns := fs.Int("max-connections", 0, "Max concurrent connections (0 = unlimited)")
+	debug := fs.Bool("debug", false, "Enable /debug/pprof endpoints")
+	shutdownTimeout := fs.Duration("shutdown-timeout", adapter.DefaultShutdownTimeout, "Graceful shutdown timeout")
+	maxReqSize := fs.Int64("max-request-size", 0, "Max request body bytes (0 = 64MiB default)")
+	maxRespSize := fs.Int64("max-response-size", 0, "Max response body bytes (0 = unlimited)")
 	_ = fs.Parse(args)
 
 	if maybeDaemonize(*daemon, *pidfile) {
@@ -134,12 +146,36 @@ func cmdWebDAV(args []string) int {
 		slog.Error("build fs", "err", err)
 		return 1
 	}
-	server := webdav.New(fsys, *addr, adapter.MountOptions{ReadOnly: *readOnly})
+
+	var origins []string
+	if *corsOrigins != "" {
+		origins = strings.Split(*corsOrigins, ",")
+		for i := range origins {
+			origins[i] = strings.TrimSpace(origins[i])
+		}
+	}
+
+	opts := adapter.MountOptions{
+		ReadOnly:        *readOnly,
+		TLSCertFile:     *tlsCert,
+		TLSKeyFile:      *tlsKey,
+		AllowedOrigins:  origins,
+		RateLimitRPS:    *rateLimitRPS,
+		RateLimitBurst:  *rateLimitBurst,
+		EnableGzip:      *enableGzip,
+		CORSOrigins:     origins,
+		MaxConnections:  *maxConns,
+		Debug:           *debug,
+		ShutdownTimeout: *shutdownTimeout,
+		MaxRequestSize:  *maxReqSize,
+		MaxResponseSize: *maxRespSize,
+	}
+	server := webdav.New(fsys, *addr, opts)
 	if err := server.Mount(context.Background()); err != nil {
 		slog.Error("mount", "err", err)
 		return 1
 	}
-	slog.Info("webdav listening", "addr", server.MountPoint())
+	slog.Info("webdav listening", "addr", server.Addr())
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
