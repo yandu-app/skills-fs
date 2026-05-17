@@ -94,21 +94,23 @@ func (s *Server) Unmount(ctx context.Context) error {
 }
 
 type WsMsg struct {
-	Op     string `json:"op"`
-	Path   string `json:"path"`
-	Data   string `json:"data,omitempty"`
-	Prefix string `json:"prefix,omitempty"`
-	SubID  string `json:"sub_id,omitempty"`
+	Op     string  `json:"op"`
+	Path   string  `json:"path"`
+	Data   string  `json:"data,omitempty"`
+	Prefix string  `json:"prefix,omitempty"`
+	SubID  string  `json:"sub_id,omitempty"`
+	Ops    []WsMsg `json:"ops,omitempty"` // for batch operations
 }
 
 type WsReply struct {
-	Op        string `json:"op"`
-	Path      string `json:"path,omitempty"`
-	Data      string `json:"data,omitempty"`
-	Error     string `json:"error,omitempty"`
-	Code      int    `json:"code,omitempty"`
-	Event     *Evt   `json:"event,omitempty"`
-	SubID     string `json:"sub_id,omitempty"`
+	Op      string    `json:"op"`
+	Path    string    `json:"path,omitempty"`
+	Data    string    `json:"data,omitempty"`
+	Error   string    `json:"error,omitempty"`
+	Code    int       `json:"code,omitempty"`
+	Event   *Evt      `json:"event,omitempty"`
+	SubID   string    `json:"sub_id,omitempty"`
+	Results []WsReply `json:"results,omitempty"` // for batch replies
 }
 
 type Evt struct {
@@ -172,103 +174,143 @@ func (s *Server) handleWS(conn *websocket.Conn) {
 		if err := websocket.JSON.Receive(conn, &msg); err != nil {
 			return
 		}
-		reply := WsReply{Op: msg.Op, Path: msg.Path, SubID: msg.SubID}
-		switch msg.Op {
-		case "read":
-			data, err := s.fs.Read(context.Background(), msg.Path, core.CallerIdentity{})
-			if err != nil {
-				reply.Error = err.Error()
-				reply.Code = errorCode(err)
-			} else {
-				reply.Data = string(data)
+		if msg.Op == "batch" {
+			maxBatch := s.opts.MaxBatchSize
+			if maxBatch == 0 {
+				maxBatch = 32
 			}
-		case "write":
-			if s.opts.ReadOnly {
-				reply.Error = "read-only filesystem"
-				reply.Code = http.StatusForbidden
-				break
-			}
-			if err := s.fs.Write(context.Background(), msg.Path, []byte(msg.Data), core.CallerIdentity{}); err != nil {
-				reply.Error = err.Error()
-				reply.Code = errorCode(err)
-			}
-		case "read-binary":
-			data, err := s.fs.Read(context.Background(), msg.Path, core.CallerIdentity{})
-			if err != nil {
-				reply.Error = err.Error()
-				reply.Code = errorCode(err)
-			} else {
-				// Send JSON ack, then binary payload.
+			if len(msg.Ops) > maxBatch {
+				reply := WsReply{Op: "batch", Error: fmt.Sprintf("batch size exceeds %d", maxBatch), Code: http.StatusBadRequest}
 				if err := websocket.JSON.Send(conn, reply); err != nil {
 					return
 				}
-				conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-				if err := websocket.Message.Send(conn, data); err != nil {
-					return
-				}
-				continue // skip default JSON reply
+				continue
 			}
-		case "write-binary":
-			if s.opts.ReadOnly {
-				reply.Error = "read-only filesystem"
-				reply.Code = http.StatusForbidden
-				break
+			results := make([]WsReply, 0, len(msg.Ops))
+			for _, sub := range msg.Ops {
+				r, _ := s.processOp(conn, subs, sub, true)
+				results = append(results, r)
 			}
-			conn.SetReadDeadline(time.Now().Add(10 * time.Second))
-			var payload []byte
-			if err := websocket.Message.Receive(conn, &payload); err != nil {
+			if err := websocket.JSON.Send(conn, WsReply{Op: "batch", Results: results, SubID: msg.SubID}); err != nil {
 				return
 			}
-			if err := s.fs.Write(context.Background(), msg.Path, payload, core.CallerIdentity{}); err != nil {
-				reply.Error = err.Error()
-				reply.Code = errorCode(err)
-			}
-		case "subscribe":
-			if msg.SubID == "" {
-				reply.Error = "missing sub_id"
-				reply.Code = http.StatusBadRequest
-				break
-			}
-			if unsub, ok := subs[msg.SubID]; ok {
-				unsub()
-			}
-			ch := make(chan core.Event, 16)
-			subID := msg.SubID
-			subs[subID] = s.fs.RegisterNotifier(func(e core.Event) {
-				select {
-				case ch <- e:
-				default:
-				}
-			}, msg.Prefix)
-			go func() {
-				for e := range ch {
-					websocket.JSON.Send(conn, WsReply{
-						Op:    "event",
-						SubID: subID,
-						Event: &Evt{Path: e.Path, Kind: fmt.Sprint(e.Kind)},
-					})
-				}
-			}()
-		case "unsubscribe":
-			if msg.SubID == "" {
-				reply.Error = "missing sub_id"
-				reply.Code = http.StatusBadRequest
-				break
-			}
-			if unsub, ok := subs[msg.SubID]; ok {
-				unsub()
-				delete(subs, msg.SubID)
-			}
-		case "ping":
-			reply.Op = "pong"
-		case "pong":
-			continue // no reply needed
-		default:
-			reply.Error = "unknown op"
-			reply.Code = http.StatusBadRequest
+			continue
+		}
+		reply, sent := s.processOp(conn, subs, msg, false)
+		if sent || msg.Op == "pong" {
+			continue
 		}
 		if err := websocket.JSON.Send(conn, reply); err != nil {
 			return
 		}
 	}
+}
+
+func (s *Server) processOp(conn *websocket.Conn, subs map[string]func(), msg WsMsg, batch bool) (WsReply, bool) {
+	reply := WsReply{Op: msg.Op, Path: msg.Path, SubID: msg.SubID}
+	switch msg.Op {
+	case "read":
+		data, err := s.fs.Read(context.Background(), msg.Path, core.CallerIdentity{})
+		if err != nil {
+			reply.Error = err.Error()
+			reply.Code = errorCode(err)
+		} else {
+			reply.Data = string(data)
+		}
+	case "write":
+		if s.opts.ReadOnly {
+			reply.Error = "read-only filesystem"
+			reply.Code = http.StatusForbidden
+			break
+		}
+		if err := s.fs.Write(context.Background(), msg.Path, []byte(msg.Data), core.CallerIdentity{}); err != nil {
+			reply.Error = err.Error()
+			reply.Code = errorCode(err)
+		}
+	case "read-binary":
+		data, err := s.fs.Read(context.Background(), msg.Path, core.CallerIdentity{})
+		if err != nil {
+			reply.Error = err.Error()
+			reply.Code = errorCode(err)
+			break
+		}
+		if batch {
+			reply.Data = string(data)
+			break
+		}
+		if err := websocket.JSON.Send(conn, reply); err != nil {
+			return reply, true
+		}
+		conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+		if err := websocket.Message.Send(conn, data); err != nil {
+			return reply, true
+		}
+		return reply, true
+	case "write-binary":
+		if s.opts.ReadOnly {
+			reply.Error = "read-only filesystem"
+			reply.Code = http.StatusForbidden
+			break
+		}
+		if batch {
+			if err := s.fs.Write(context.Background(), msg.Path, []byte(msg.Data), core.CallerIdentity{}); err != nil {
+				reply.Error = err.Error()
+				reply.Code = errorCode(err)
+			}
+			break
+		}
+		conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+		var payload []byte
+		if err := websocket.Message.Receive(conn, &payload); err != nil {
+			return reply, true
+		}
+		if err := s.fs.Write(context.Background(), msg.Path, payload, core.CallerIdentity{}); err != nil {
+			reply.Error = err.Error()
+			reply.Code = errorCode(err)
+		}
+	case "subscribe":
+		if msg.SubID == "" {
+			reply.Error = "missing sub_id"
+			reply.Code = http.StatusBadRequest
+			break
+		}
+		if unsub, ok := subs[msg.SubID]; ok {
+			unsub()
+		}
+		ch := make(chan core.Event, 16)
+		subID := msg.SubID
+		subs[subID] = s.fs.RegisterNotifier(func(e core.Event) {
+			select {
+			case ch <- e:
+			default:
+			}
+		}, msg.Prefix)
+		go func() {
+			for e := range ch {
+				websocket.JSON.Send(conn, WsReply{
+					Op:    "event",
+					SubID: subID,
+					Event: &Evt{Path: e.Path, Kind: fmt.Sprint(e.Kind)},
+				})
+			}
+		}()
+	case "unsubscribe":
+		if msg.SubID == "" {
+			reply.Error = "missing sub_id"
+			reply.Code = http.StatusBadRequest
+			break
+		}
+		if unsub, ok := subs[msg.SubID]; ok {
+			unsub()
+			delete(subs, msg.SubID)
+		}
+	case "ping":
+		reply.Op = "pong"
+	case "pong":
+		// no reply
+	default:
+		reply.Error = "unknown op"
+		reply.Code = http.StatusBadRequest
+	}
+	return reply, false
 }

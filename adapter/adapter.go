@@ -29,6 +29,7 @@ type MountOptions struct {
 	MaxRequestSize   int64         // max request body bytes (PUT); zero = unlimited
 	MaxResponseSize  int64         // max response body bytes (GET); zero = unlimited
 	MaxPropfindDepth int           // max depth for PROPFIND; zero = default (3), negative = unlimited
+	MaxBatchSize     int           // max ops in a WebSocket batch; zero = default (32)
 }
 
 // ShutdownContext returns a context with timeout if the supplied context has
