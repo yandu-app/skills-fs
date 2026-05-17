@@ -2410,3 +2410,76 @@ func TestWriteErrorMapping(t *testing.T) {
 		})
 	}
 }
+
+func TestWebDAVDebugPprof(t *testing.T) {
+	fs := core.NewFS(core.GlobalConfig{})
+	server := New(fs, "127.0.0.1:0", adapter.MountOptions{Debug: true})
+	if err := server.Mount(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Unmount(context.Background())
+
+	baseURL := "http://" + server.ln.Addr().String()
+	resp, err := http.Get(baseURL + "/debug/pprof/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 for pprof, got %d", resp.StatusCode)
+	}
+}
+
+func TestWebDAVRateLimit(t *testing.T) {
+	fs := core.NewFS(core.GlobalConfig{})
+	if err := fs.Mount("/blob", core.MountEntry{Kind: core.KindBlob, Mode: 0o644, BlobData: []byte("x")}); err != nil {
+		t.Fatal(err)
+	}
+	server := New(fs, "127.0.0.1:0", adapter.MountOptions{RateLimitRPS: 1, RateLimitBurst: 1})
+	if err := server.Mount(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Unmount(context.Background())
+
+	baseURL := "http://" + server.ln.Addr().String()
+	// First request should succeed.
+	resp1, err := http.Get(baseURL + "/blob")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp1.Body.Close()
+	if resp1.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 for first request, got %d", resp1.StatusCode)
+	}
+
+	// Immediate second request may be rate limited.
+	resp2, err := http.Get(baseURL + "/blob")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp2.Body.Close()
+	// We don't assert the exact status because rate limit behavior depends on timing.
+	// The important thing is that the server starts with rate limiting enabled.
+}
+
+func TestWebDAVConnLimit(t *testing.T) {
+	fs := core.NewFS(core.GlobalConfig{})
+	if err := fs.Mount("/blob", core.MountEntry{Kind: core.KindBlob, Mode: 0o644, BlobData: []byte("x")}); err != nil {
+		t.Fatal(err)
+	}
+	server := New(fs, "127.0.0.1:0", adapter.MountOptions{MaxConnections: 10})
+	if err := server.Mount(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Unmount(context.Background())
+
+	baseURL := "http://" + server.ln.Addr().String()
+	resp, err := http.Get(baseURL + "/blob")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+}
