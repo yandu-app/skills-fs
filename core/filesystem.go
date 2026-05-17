@@ -295,7 +295,7 @@ func (fs *FileSystem) Stat(path string, caller CallerIdentity) (st Stat, err err
 		return Stat{Path: path, Kind: KindDir, Mode: 0o555, UID: fs.cfg.DefaultUID, GID: fs.cfg.DefaultGID}, nil
 	}
 	if path == "/sys/metrics" {
-		return Stat{Path: path, Kind: KindBlob, Mode: 0o444, UID: fs.cfg.DefaultUID, GID: fs.cfg.DefaultGID, Size: int64(len(fs.metrics.Prometheus()))}, nil
+		return Stat{Path: path, Kind: KindBlob, Mode: 0o444, UID: fs.cfg.DefaultUID, GID: fs.cfg.DefaultGID, Size: int64(len(fs.Prometheus()))}, nil
 	}
 	if path == "/skills" {
 		return Stat{Path: path, Kind: KindDir, Mode: 0o555, UID: fs.cfg.DefaultUID, GID: fs.cfg.DefaultGID}, nil
@@ -426,7 +426,7 @@ func (fs *FileSystem) Read(ctx context.Context, path string, caller CallerIdenti
 	started := time.Now()
 	defer func() { fs.metrics.record(OpRead, started, err) }()
 	if path == "/sys/metrics" {
-		return fs.metrics.Prometheus(), nil
+		return fs.Prometheus(), nil
 	}
 	if name, ok := skillFilePath(path); ok {
 		data, readErr := fs.skills.ReadSkillFile(name)
@@ -787,6 +787,39 @@ func validateMountEntry(entry *MountEntry) error {
 	return nil
 }
 
+// Prometheus returns the complete set of metrics in Prometheus text format,
+// including operation histograms, event counters, and runtime gauges.
+func (fs *FileSystem) Prometheus() []byte {
+	var b strings.Builder
+	b.Write(fs.metrics.Prometheus())
+
+	fs.mu.RLock()
+	mounts := fs.router.count()
+	providers := len(fs.providers)
+	fs.mu.RUnlock()
+
+	handles := fs.handles.Active()
+
+	b.WriteString("# TYPE skills_fs_mounts_total gauge\n")
+	fmt.Fprintf(&b, "skills_fs_mounts_total %d\n", mounts)
+	b.WriteString("# TYPE skills_fs_handles_active gauge\n")
+	fmt.Fprintf(&b, "skills_fs_handles_active %d\n", handles)
+	b.WriteString("# TYPE skills_fs_providers_total gauge\n")
+	fmt.Fprintf(&b, "skills_fs_providers_total %d\n", providers)
+
+	fs.breakersMu.Lock()
+	if len(fs.breakers) > 0 {
+		b.WriteString("# TYPE skills_fs_breaker_state gauge\n")
+		for id, cb := range fs.breakers {
+			st := cb.currentState()
+			fmt.Fprintf(&b, "skills_fs_breaker_state{provider=%q} %d\n", id, st)
+		}
+	}
+	fs.breakersMu.Unlock()
+
+	return []byte(b.String())
+}
+
 // circuit breaker states.
 const (
 	cbClosed = iota
@@ -830,6 +863,12 @@ func (fs *FileSystem) breakerOpen(id string) bool {
 		return true
 	}
 	return false
+}
+
+func (cb *circuitBreaker) currentState() int {
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
+	return cb.state
 }
 
 func (fs *FileSystem) recordBreakerResult(id string, success bool) {
