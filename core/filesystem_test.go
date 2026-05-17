@@ -1979,3 +1979,76 @@ func TestStatSkillFileDeleted(t *testing.T) {
 		t.Fatal("expected error when skill file is missing")
 	}
 }
+
+func TestOnShutdownHooks(t *testing.T) {
+	fs := NewFS(GlobalConfig{})
+
+	var order []int
+	fs.OnShutdown(func() error {
+		order = append(order, 1)
+		return nil
+	})
+	fs.OnShutdown(func() error {
+		order = append(order, 2)
+		return nil
+	})
+	fs.OnShutdown(func() error {
+		order = append(order, 3)
+		return nil
+	})
+
+	if err := fs.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	// Hooks run in reverse registration order (LIFO).
+	want := []int{3, 2, 1}
+	if len(order) != len(want) {
+		t.Fatalf("expected %d hooks, got %d", len(want), len(order))
+	}
+	for i, v := range want {
+		if order[i] != v {
+			t.Fatalf("hook %d: expected %d, got %d", i, v, order[i])
+		}
+	}
+}
+
+func TestOnShutdownHookErrorIsTolerated(t *testing.T) {
+	fs := NewFS(GlobalConfig{})
+
+	var ran bool
+	fs.OnShutdown(func() error {
+		return errors.New("boom")
+	})
+	fs.OnShutdown(func() error {
+		ran = true
+		return nil
+	})
+
+	if err := fs.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !ran {
+		t.Fatal("expected second hook to run despite first hook error")
+	}
+}
+
+func TestOnShutdownHooksClearedAfterRun(t *testing.T) {
+	fs := NewFS(GlobalConfig{})
+
+	var calls int
+	fs.OnShutdown(func() error {
+		calls++
+		return nil
+	})
+
+	if err := fs.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatalf("expected hook to run once, got %d", calls)
+	}
+}

@@ -81,6 +81,8 @@ type FileSystem struct {
 	breakersMu      sync.Mutex
 	providerCacheMu sync.Mutex
 	providerCache   map[string]providerCacheEntry
+	cleanup         []func() error
+	cleanupMu       sync.Mutex
 	mu              sync.RWMutex
 }
 
@@ -126,10 +128,21 @@ func (fs *FileSystem) CloseAllHandles() {
 	}
 }
 
+// OnShutdown registers a cleanup hook that runs during Shutdown after all
+// handles, streams, and events are torn down. Hooks run in reverse
+// registration order (LIFO). Errors from individual hooks are discarded so
+// that later hooks still execute.
+func (fs *FileSystem) OnShutdown(fn func() error) {
+	fs.cleanupMu.Lock()
+	defer fs.cleanupMu.Unlock()
+	fs.cleanup = append(fs.cleanup, fn)
+}
+
 // Shutdown performs a graceful teardown: it closes all handles with the
-// provided context, closes all stream buffers, and clears event notifiers.
-// If ctx is cancelled or reaches its deadline, Shutdown returns immediately
-// with ctx.Err() and some handles may remain open.
+// provided context, closes all stream buffers, clears event notifiers, and
+// runs any registered OnShutdown hooks. If ctx is cancelled or reaches its
+// deadline, Shutdown returns immediately with ctx.Err() and some handles may
+// remain open.
 func (fs *FileSystem) Shutdown(ctx context.Context) error {
 	for _, h := range fs.handles.snapshot() {
 		select {
@@ -141,7 +154,19 @@ func (fs *FileSystem) Shutdown(ctx context.Context) error {
 	}
 	fs.streams.closeAll()
 	fs.events.clear()
+	fs.runCleanup()
 	return nil
+}
+
+func (fs *FileSystem) runCleanup() {
+	fs.cleanupMu.Lock()
+	hooks := make([]func() error, len(fs.cleanup))
+	copy(hooks, fs.cleanup)
+	fs.cleanup = nil
+	fs.cleanupMu.Unlock()
+	for i := len(hooks) - 1; i >= 0; i-- {
+		_ = hooks[i]()
+	}
 }
 
 func (fs *FileSystem) RegisterProvider(p Provider) error {
