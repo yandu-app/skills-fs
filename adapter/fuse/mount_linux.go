@@ -82,6 +82,8 @@ var _ fs.NodeMkdirer = (*rootNode)(nil)
 var _ fs.NodeUnlinker = (*rootNode)(nil)
 var _ fs.NodeRmdirer = (*rootNode)(nil)
 var _ fs.NodeRenamer = (*rootNode)(nil)
+var _ fs.NodeReadlinker = (*rootNode)(nil)
+var _ fs.NodeSymlinker = (*rootNode)(nil)
 
 func (r *rootNode) Getattr(ctx context.Context, f fs.FileHandle, out *fuse.AttrOut) syscall.Errno {
 	return r.attr(out)
@@ -138,6 +140,14 @@ func (r *rootNode) Rmdir(ctx context.Context, name string) syscall.Errno {
 
 func (r *rootNode) Rename(ctx context.Context, name string, newParent fs.InodeEmbedder, newName string, flags uint32) syscall.Errno {
 	return rename(r.fsys, "/", name, newParent, newName)
+}
+
+func (r *rootNode) Readlink(ctx context.Context) ([]byte, syscall.Errno) {
+	return readlink(r.fsys, "/")
+}
+
+func (r *rootNode) Symlink(ctx context.Context, target, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
+	return symlink(ctx, r.fsys, "/", target, name, out, r)
 }
 
 // handleEvent forwards core events to the FUSE kernel cache.
@@ -197,6 +207,8 @@ var _ fs.NodeMkdirer = (*pathNode)(nil)
 var _ fs.NodeUnlinker = (*pathNode)(nil)
 var _ fs.NodeRmdirer = (*pathNode)(nil)
 var _ fs.NodeRenamer = (*pathNode)(nil)
+var _ fs.NodeReadlinker = (*pathNode)(nil)
+var _ fs.NodeSymlinker = (*pathNode)(nil)
 
 func (n *pathNode) Getattr(ctx context.Context, f fs.FileHandle, out *fuse.AttrOut) syscall.Errno {
 	stat, err := n.fsys.Stat(n.path, core.CallerIdentity{})
@@ -267,6 +279,14 @@ func (n *pathNode) Rmdir(ctx context.Context, name string) syscall.Errno {
 
 func (n *pathNode) Rename(ctx context.Context, name string, newParent fs.InodeEmbedder, newName string, flags uint32) syscall.Errno {
 	return rename(n.fsys, n.path, name, newParent, newName)
+}
+
+func (n *pathNode) Readlink(ctx context.Context) ([]byte, syscall.Errno) {
+	return readlink(n.fsys, n.path)
+}
+
+func (n *pathNode) Symlink(ctx context.Context, target, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
+	return symlink(ctx, n.fsys, n.path, target, name, out, n)
 }
 
 // fileHandle bridges an open core.Handle to go-fuse file operations.
@@ -341,6 +361,8 @@ func fileMode(st core.Stat) uint32 {
 	switch st.Kind {
 	case core.KindDir:
 		return syscall.S_IFDIR | st.Mode
+	case core.KindLink:
+		return syscall.S_IFLNK | st.Mode
 	default:
 		return syscall.S_IFREG | st.Mode
 	}
@@ -397,6 +419,8 @@ func toErrno(err error) syscall.Errno {
 		return syscall.EISDIR
 	case core.ENOSYS:
 		return syscall.ENOSYS
+	case core.ELOOP:
+		return syscall.ELOOP
 	default:
 		return syscall.EIO
 	}
@@ -469,4 +493,27 @@ func rename(fsys *core.FileSystem, parentPath, name string, newParent fs.InodeEm
 		return syscall.EINVAL
 	}
 	return toErrno(fsys.Rename(oldPath, newPath))
+}
+
+func readlink(fsys *core.FileSystem, p string) ([]byte, syscall.Errno) {
+	target, err := fsys.ReadLink(p)
+	if err != nil {
+		return nil, toErrno(err)
+	}
+	return []byte(target), fs.OK
+}
+
+func symlink(ctx context.Context, fsys *core.FileSystem, parentPath, target, name string, out *fuse.EntryOut, parent fs.InodeEmbedder) (*fs.Inode, syscall.Errno) {
+	childPath := filepath.Join(parentPath, name)
+	if err := fsys.Mount(childPath, core.MountEntry{Kind: core.KindLink, Mode: 0o777, LinkPath: target}); err != nil {
+		return nil, toErrno(err)
+	}
+	stat, err := fsys.Stat(childPath, core.CallerIdentity{})
+	if err != nil {
+		_ = fsys.Unmount(childPath)
+		return nil, toErrno(err)
+	}
+	fillEntryOut(out, stat)
+	node := &pathNode{path: childPath, fsys: fsys}
+	return parent.EmbeddedInode().NewInode(ctx, node, fs.StableAttr{Mode: syscall.S_IFLNK | 0o777}), fs.OK
 }
