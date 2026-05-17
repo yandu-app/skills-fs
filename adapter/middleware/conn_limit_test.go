@@ -70,3 +70,14 @@ func TestNilConnLimiter(t *testing.T) {
 		t.Fatal("nil limiter should report 0 active")
 	}
 }
+
+func TestConnLimiterZeroMeansUnlimited(t *testing.T) {
+	cl := NewConnLimiter(0)
+	if cl != nil {
+		t.Fatal("zero max should return nil")
+	}
+	clNeg := NewConnLimiter(-1)
+	if clNeg != nil {
+		t.Fatal("negative max should return nil")
+	}
+}
