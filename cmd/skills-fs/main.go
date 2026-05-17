@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"runtime"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/skills-fs/skills-fs/adapter"
 	"github.com/skills-fs/skills-fs/adapter/fuse"
@@ -42,6 +44,8 @@ func main() {
 		os.Exit(cmdFUSE(os.Args[2:]))
 	case "validate":
 		os.Exit(cmdValidate(os.Args[2:]))
+	case "health":
+		os.Exit(cmdHealth(os.Args[2:]))
 	case "version":
 		printVersion(os.Stdout)
 	default:
@@ -57,6 +61,7 @@ func usage() {
 	fmt.Fprintf(os.Stderr, "  websocket Start WebSocket server\n")
 	fmt.Fprintf(os.Stderr, "  fuse      Mount FUSE filesystem (Linux only)\n")
 	fmt.Fprintf(os.Stderr, "  validate  Validate configuration file\n")
+	fmt.Fprintf(os.Stderr, "  health    Check server health endpoint\n")
 	fmt.Fprintf(os.Stderr, "  version   Print version\n")
 }
 
@@ -386,5 +391,29 @@ func cmdValidate(args []string) int {
 	fsys.Shutdown(context.Background())
 
 	fmt.Println("configuration valid")
+	return 0
+}
+
+func cmdHealth(args []string) int {
+	fs := flag.NewFlagSet("health", flag.ExitOnError)
+	addr := fs.String("addr", "http://localhost:8080", "Server address to probe")
+	path := fs.String("path", "/healthz", "Health endpoint path")
+	timeout := fs.Duration("timeout", 5*time.Second, "Request timeout")
+	_ = fs.Parse(args)
+
+	client := &http.Client{Timeout: *timeout}
+	url := strings.TrimSuffix(*addr, "/") + *path
+	resp, err := client.Get(url)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "health check failed: %v\n", err)
+		return 1
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		fmt.Fprintf(os.Stderr, "health check failed: status %d\n", resp.StatusCode)
+		return 1
+	}
+	fmt.Println("healthy")
 	return 0
 }
