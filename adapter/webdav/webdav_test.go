@@ -809,6 +809,42 @@ func TestWebDAVProppatchReadOnly(t *testing.T) {
 	}
 }
 
+func TestWebDAVSizeLimits(t *testing.T) {
+	fs := core.NewFS(core.GlobalConfig{})
+	if err := fs.Mount("/blob", core.MountEntry{Kind: core.KindBlob, Mode: 0o644, BlobData: []byte("hello-world-data")}); err != nil {
+		t.Fatal(err)
+	}
+
+	server := New(fs, "127.0.0.1:0", adapter.MountOptions{MaxRequestSize: 5, MaxResponseSize: 5})
+	if err := server.Mount(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Unmount(context.Background())
+
+	baseURL := "http://" + server.ln.Addr().String()
+
+	// GET should fail because response exceeds limit.
+	resp, err := http.Get(baseURL + "/blob")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("expected 500 for oversized response, got %d", resp.StatusCode)
+	}
+
+	// PUT should fail because request exceeds limit.
+	req, _ := http.NewRequest(http.MethodPut, baseURL+"/blob", strings.NewReader("too-large"))
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413 for oversized request, got %d", resp.StatusCode)
+	}
+}
+
 func TestWebDAVDebugEndpoint(t *testing.T) {
 	server := New(core.NewFS(core.GlobalConfig{}), "127.0.0.1:0", adapter.MountOptions{Debug: true})
 	if err := server.Mount(context.Background()); err != nil {

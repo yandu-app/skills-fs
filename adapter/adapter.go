@@ -26,6 +26,8 @@ type MountOptions struct {
 	CORSOrigins     []string      // empty = allow all origins
 	MaxConnections  int           // zero = unlimited concurrent connections
 	Debug           bool          // enable /debug/pprof endpoints
+	MaxRequestSize  int64         // max request body bytes (PUT); zero = unlimited
+	MaxResponseSize int64         // max response body bytes (GET); zero = unlimited
 }
 
 // ShutdownContext returns a context with timeout if the supplied context has
