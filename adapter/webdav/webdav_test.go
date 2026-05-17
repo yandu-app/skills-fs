@@ -1403,3 +1403,111 @@ func TestParseRangeUnit(t *testing.T) {
 		}
 	}
 }
+
+func TestWebDAVCopyOverwrite(t *testing.T) {
+	fs := core.NewFS(core.GlobalConfig{})
+	if err := fs.Mount("/src", core.MountEntry{Kind: core.KindBlob, Mode: 0o644, BlobData: []byte("src-data")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Mount("/dst", core.MountEntry{Kind: core.KindBlob, Mode: 0o644, BlobData: []byte("dst-data")}); err != nil {
+		t.Fatal(err)
+	}
+
+	server := New(fs, "127.0.0.1:0", adapter.MountOptions{})
+	if err := server.Mount(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Unmount(context.Background())
+
+	baseURL := "http://" + server.ln.Addr().String()
+
+	// COPY with Overwrite: F to existing destination should fail.
+	req, _ := http.NewRequest("COPY", baseURL+"/src", nil)
+	req.Header.Set("Destination", baseURL+"/dst")
+	req.Header.Set("Overwrite", "F")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusPreconditionFailed {
+		t.Fatalf("expected 412, got %d", resp.StatusCode)
+	}
+
+	// COPY with default (no Overwrite header) should succeed.
+	req, _ = http.NewRequest("COPY", baseURL+"/src", nil)
+	req.Header.Set("Destination", baseURL+"/dst")
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", resp.StatusCode)
+	}
+
+	// Verify destination was overwritten.
+	resp, err = http.Get(baseURL + "/dst")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if string(body) != "src-data" {
+		t.Fatalf("expected src-data, got %q", string(body))
+	}
+}
+
+func TestWebDAVMoveOverwrite(t *testing.T) {
+	fs := core.NewFS(core.GlobalConfig{})
+	if err := fs.Mount("/src", core.MountEntry{Kind: core.KindBlob, Mode: 0o644, BlobData: []byte("src-data")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Mount("/dst", core.MountEntry{Kind: core.KindBlob, Mode: 0o644, BlobData: []byte("dst-data")}); err != nil {
+		t.Fatal(err)
+	}
+
+	server := New(fs, "127.0.0.1:0", adapter.MountOptions{})
+	if err := server.Mount(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Unmount(context.Background())
+
+	baseURL := "http://" + server.ln.Addr().String()
+
+	// MOVE with Overwrite: F to existing destination should fail.
+	req, _ := http.NewRequest("MOVE", baseURL+"/src", nil)
+	req.Header.Set("Destination", baseURL+"/dst")
+	req.Header.Set("Overwrite", "F")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusPreconditionFailed {
+		t.Fatalf("expected 412, got %d", resp.StatusCode)
+	}
+
+	// MOVE with Overwrite: T should succeed.
+	req, _ = http.NewRequest("MOVE", baseURL+"/src", nil)
+	req.Header.Set("Destination", baseURL+"/dst")
+	req.Header.Set("Overwrite", "T")
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", resp.StatusCode)
+	}
+
+	// Source should no longer exist.
+	resp, err = http.Get(baseURL + "/src")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected 404 for moved source, got %d", resp.StatusCode)
+	}
+}
