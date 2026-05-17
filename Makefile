@@ -1,4 +1,4 @@
-.PHONY: all test coverage coverage-all race bench build gen-docs lint vulncheck clean
+.PHONY: all test coverage coverage-all race bench build gen-docs lint vulncheck clean fmt fmt-check
 
 GOCACHE ?= /tmp/skills-fs-gocache
 
@@ -47,6 +47,12 @@ lint:
 
 vulncheck:
 	go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+fmt:
+	gofmt -w .
+
+fmt-check:
+	@test -z "$$(gofmt -l .)" || (echo "gofmt would reformat:" && gofmt -l . && exit 1)
 
 clean:
 	rm -f skills-fs webdav-server websocket-events websocket-reconnect basic coverage.out
