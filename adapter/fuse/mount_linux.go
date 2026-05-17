@@ -34,7 +34,7 @@ func (s *Server) Mount(ctx context.Context) error {
 		opts.MountOptions.Options = append(opts.MountOptions.Options, "ro")
 	}
 
-	root := &rootNode{fsys: s.fs, inodes: make(map[string]*fs.Inode)}
+	root := &rootNode{fsys: s.fs, readOnly: s.opts.ReadOnly, inodes: make(map[string]*fs.Inode)}
 	server, err := fs.Mount(s.mountPoint, root, opts)
 	if err != nil {
 		return err
@@ -78,9 +78,10 @@ func (s *Server) Unmount(ctx context.Context) error {
 
 type rootNode struct {
 	fs.Inode
-	fsys   *core.FileSystem
-	mu     sync.RWMutex
-	inodes map[string]*fs.Inode
+	fsys     *core.FileSystem
+	readOnly bool
+	mu       sync.RWMutex
+	inodes   map[string]*fs.Inode
 }
 
 var _ fs.NodeGetattrer = (*rootNode)(nil)
@@ -110,7 +111,7 @@ func (r *rootNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) 
 	if err != nil {
 		return nil, toErrno(err)
 	}
-	node := &pathNode{path: p, fsys: r.fsys}
+	node := &pathNode{path: p, fsys: r.fsys, readOnly: r.readOnly}
 	fillEntryOut(out, stat)
 	mode := fileMode(stat)
 	ino := r.NewInode(ctx, node, fs.StableAttr{Mode: uint32(mode)})
@@ -133,22 +134,37 @@ func (r *rootNode) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint3
 }
 
 func (r *rootNode) Create(ctx context.Context, name string, flags uint32, mode uint32, out *fuse.EntryOut) (*fs.Inode, fs.FileHandle, uint32, syscall.Errno) {
+	if e := checkReadOnly(r); e != fs.OK {
+		return nil, nil, 0, e
+	}
 	return createFile(ctx, r.fsys, "/", name, flags, mode, out, r)
 }
 
 func (r *rootNode) Mkdir(ctx context.Context, name string, mode uint32, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
+	if e := checkReadOnly(r); e != fs.OK {
+		return nil, e
+	}
 	return mkdir(ctx, r.fsys, "/", name, mode, out, r)
 }
 
 func (r *rootNode) Unlink(ctx context.Context, name string) syscall.Errno {
+	if e := checkReadOnly(r); e != fs.OK {
+		return e
+	}
 	return unlink(r.fsys, "/", name)
 }
 
 func (r *rootNode) Rmdir(ctx context.Context, name string) syscall.Errno {
+	if e := checkReadOnly(r); e != fs.OK {
+		return e
+	}
 	return rmdir(r.fsys, "/", name)
 }
 
 func (r *rootNode) Rename(ctx context.Context, name string, newParent fs.InodeEmbedder, newName string, flags uint32) syscall.Errno {
+	if e := checkReadOnly(r); e != fs.OK {
+		return e
+	}
 	return rename(r.fsys, "/", name, newParent, newName)
 }
 
@@ -157,6 +173,9 @@ func (r *rootNode) Readlink(ctx context.Context) ([]byte, syscall.Errno) {
 }
 
 func (r *rootNode) Symlink(ctx context.Context, target, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
+	if e := checkReadOnly(r); e != fs.OK {
+		return nil, e
+	}
 	return symlink(ctx, r.fsys, "/", target, name, out, r)
 }
 
@@ -204,8 +223,16 @@ func (r *rootNode) notifyParentEntry(p string) {
 // pathNode represents any non-root path in the skills-fs namespace.
 type pathNode struct {
 	fs.Inode
-	path string
-	fsys *core.FileSystem
+	path     string
+	fsys     *core.FileSystem
+	readOnly bool
+}
+
+func checkReadOnly(r *rootNode) syscall.Errno {
+	if r.readOnly {
+		return syscall.EROFS
+	}
+	return fs.OK
 }
 
 var _ fs.NodeGetattrer = (*pathNode)(nil)
@@ -235,7 +262,7 @@ func (n *pathNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) 
 	if err != nil {
 		return nil, toErrno(err)
 	}
-	child := &pathNode{path: childPath, fsys: n.fsys}
+	child := &pathNode{path: childPath, fsys: n.fsys, readOnly: n.readOnly}
 	fillEntryOut(out, stat)
 	mode := fileMode(stat)
 	return n.NewInode(ctx, child, fs.StableAttr{Mode: uint32(mode)}), fs.OK
@@ -272,22 +299,37 @@ func (n *pathNode) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint3
 }
 
 func (n *pathNode) Create(ctx context.Context, name string, flags uint32, mode uint32, out *fuse.EntryOut) (*fs.Inode, fs.FileHandle, uint32, syscall.Errno) {
+	if n.readOnly {
+		return nil, nil, 0, syscall.EROFS
+	}
 	return createFile(ctx, n.fsys, n.path, name, flags, mode, out, n)
 }
 
 func (n *pathNode) Mkdir(ctx context.Context, name string, mode uint32, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
+	if n.readOnly {
+		return nil, syscall.EROFS
+	}
 	return mkdir(ctx, n.fsys, n.path, name, mode, out, n)
 }
 
 func (n *pathNode) Unlink(ctx context.Context, name string) syscall.Errno {
+	if n.readOnly {
+		return syscall.EROFS
+	}
 	return unlink(n.fsys, n.path, name)
 }
 
 func (n *pathNode) Rmdir(ctx context.Context, name string) syscall.Errno {
+	if n.readOnly {
+		return syscall.EROFS
+	}
 	return rmdir(n.fsys, n.path, name)
 }
 
 func (n *pathNode) Rename(ctx context.Context, name string, newParent fs.InodeEmbedder, newName string, flags uint32) syscall.Errno {
+	if n.readOnly {
+		return syscall.EROFS
+	}
 	return rename(n.fsys, n.path, name, newParent, newName)
 }
 
@@ -296,13 +338,17 @@ func (n *pathNode) Readlink(ctx context.Context) ([]byte, syscall.Errno) {
 }
 
 func (n *pathNode) Symlink(ctx context.Context, target, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
+	if n.readOnly {
+		return nil, syscall.EROFS
+	}
 	return symlink(ctx, n.fsys, n.path, target, name, out, n)
 }
 
 // fileHandle bridges an open core.Handle to go-fuse file operations.
 type fileHandle struct {
-	h    *core.Handle
-	fsys *core.FileSystem
+	h        *core.Handle
+	fsys     *core.FileSystem
+	readOnly bool
 }
 
 var _ fs.FileReader = (*fileHandle)(nil)
@@ -327,6 +373,9 @@ func (fh *fileHandle) Read(ctx context.Context, buf []byte, off int64) (fuse.Rea
 }
 
 func (fh *fileHandle) Write(ctx context.Context, data []byte, off int64) (uint32, syscall.Errno) {
+	if fh.readOnly {
+		return 0, syscall.EROFS
+	}
 	err := fh.h.Write(ctx, data)
 	if err != nil {
 		return 0, toErrno(err)
