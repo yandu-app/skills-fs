@@ -30,6 +30,8 @@ Host bindings own only:
 - `core`: public embedded filesystem API and in-memory semantics.
 - `adapter`: adapter contracts (`MountedFS`, `MountOptions`, `Factory`) shared by FUSE and WebDAV.
 - `adapter/fuse`: Linux FUSE implementation using `go-fuse/v2`. Non-Linux platforms compile a stub returning `ErrNotImplemented`.
-- `adapter/webdav`: WebDAV fallback package boundary. Currently a no-listener stub.
+- `adapter/webdav`: Full WebDAV server with GET, PUT, PROPFIND, COPY, MOVE, LOCK, and streaming binary support.
+- `adapter/websocket`: WebSocket streaming adapter with JSON protocol, binary messages, per-message deflate, and event subscriptions.
+- `adapter/middleware`: Shared HTTP middleware for request IDs, CORS, rate limiting, connection limiting, gzip, and size limits.
 - `bench`: required benchmark entry points.
 - `docs`: handoff, architecture, testing, and milestone documents.
