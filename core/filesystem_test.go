@@ -704,6 +704,39 @@ func TestMountReservedPath(t *testing.T) {
 	}
 }
 
+func TestAsyncProviderRead(t *testing.T) {
+	fs := NewFS(GlobalConfig{})
+	p := &fakeProvider{id: "async", response: []byte("delayed")}
+	if err := fs.RegisterProvider(p); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Mount("/api", MountEntry{
+		Kind: KindAPI,
+		Mode: 0o444,
+		Ops: map[OpCode]*CapConfig{
+			OpRead: {ProviderID: "async", Action: "greet", Async: true},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := fs.Read(context.Background(), "/api", CallerIdentity{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data) != 0 {
+		t.Fatalf("expected empty async result, got %q", data)
+	}
+
+	// Wait for background invocation.
+	time.Sleep(100 * time.Millisecond)
+	p.mu.Lock()
+	if len(p.calls) != 1 {
+		t.Fatalf("expected 1 async call, got %d", len(p.calls))
+	}
+	p.mu.Unlock()
+}
+
 func TestMaxBlobSizeBudget(t *testing.T) {
 	fs := NewFS(GlobalConfig{MaxBlobSize: 5})
 	if err := fs.Mount("/small", MountEntry{Kind: KindBlob, Mode: 0o666, BlobData: []byte("12345")}); err != nil {
