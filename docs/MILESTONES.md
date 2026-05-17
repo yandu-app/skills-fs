@@ -34,9 +34,10 @@ Status: complete.
 - FUSE inotify forwarding via kernel cache invalidation (NotifyContent / NotifyEntry).
 - Build-tagged stub for non-Linux platforms.
 - fs.Notify event API (Create, Write, Remove) with multi-listener support.
-- WebDAV fallback (stub).
+- WebDAV server with GET, PUT, PROPFIND, COPY, MOVE, LOCK, UNLOCK, PROPPATCH, SEARCH, ETags, Range, gzip, CORS, rate limiting, and `/metrics`.
+- WebSocket streaming adapter with JSON/binary protocol, per-message deflate, batch ops, subscriptions, and `/metrics`.
 
-Status: FUSE and event API complete. WebDAV stub pending M4+ prioritization.
+Status: complete.
 
 ## M4 Host Bindings
 
