@@ -39,16 +39,42 @@ func TestHandleAccessorsAndManager(t *testing.T) {
 	}
 }
 
+func TestHandleManagerMaxOpen(t *testing.T) {
+	fs := NewFS(GlobalConfig{MaxOpenHandles: 1})
+	if err := fs.Mount("/blob", MountEntry{Kind: KindBlob, Mode: 0o666}); err != nil {
+		t.Fatal(err)
+	}
+	h, err := fs.Open("/blob", OpenRead, CallerIdentity{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Close(context.Background())
+
+	_, err = fs.Open("/blob", OpenRead, CallerIdentity{})
+	if !IsCode(err, EBUSY) {
+		t.Fatalf("expected EBUSY at max handles, got %v", err)
+	}
+}
+
 func TestOpenRejectsInvalidFlagsAndPermission(t *testing.T) {
 	fs := NewFS(GlobalConfig{})
 	if err := fs.Mount("/blob", MountEntry{Kind: KindBlob, Mode: 0o400, UID: 1, GID: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Mount("/writeonly", MountEntry{Kind: KindBlob, Mode: 0o200, UID: 1, GID: 1}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := fs.Open("/blob", 0, CallerIdentity{UID: 1, GID: 1}); !IsCode(err, EINVAL) {
 		t.Fatalf("expected EINVAL, got %v", err)
 	}
 	if _, err := fs.Open("/blob", OpenWrite, CallerIdentity{UID: 2, GID: 2}); !IsCode(err, EACCES) {
-		t.Fatalf("expected EACCES, got %v", err)
+		t.Fatalf("expected EACCES for write, got %v", err)
+	}
+	if _, err := fs.Open("/writeonly", OpenRead, CallerIdentity{UID: 1, GID: 1}); !IsCode(err, EACCES) {
+		t.Fatalf("expected EACCES for read, got %v", err)
+	}
+	if _, err := fs.Open("/nonexistent", OpenRead, CallerIdentity{}); !IsCode(err, ENOENT) {
+		t.Fatalf("expected ENOENT, got %v", err)
 	}
 }
 
