@@ -6,6 +6,17 @@ import (
 	"time"
 )
 
+func TestNewLockManagerDefaultTimeout(t *testing.T) {
+	lm := newLockManager(0)
+	if lm.deadlockTimeout != defaultLockTimeout {
+		t.Fatalf("expected default timeout %v, got %v", defaultLockTimeout, lm.deadlockTimeout)
+	}
+	lm2 := newLockManager(5 * time.Second)
+	if lm2.deadlockTimeout != 5*time.Second {
+		t.Fatalf("expected custom timeout 5s, got %v", lm2.deadlockTimeout)
+	}
+}
+
 func TestFlockContextCancellation(t *testing.T) {
 	fs := NewFS(GlobalConfig{})
 	if err := fs.Mount("/blob", MountEntry{Kind: KindBlob, Mode: 0o666}); err != nil {
