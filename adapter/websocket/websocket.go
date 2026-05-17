@@ -2,6 +2,7 @@ package websocket
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -94,16 +95,36 @@ type WsMsg struct {
 }
 
 type WsReply struct {
-	Op    string `json:"op"`
-	Path  string `json:"path,omitempty"`
-	Data  string `json:"data,omitempty"`
-	Error string `json:"error,omitempty"`
-	Event *Evt   `json:"event,omitempty"`
+	Op        string `json:"op"`
+	Path      string `json:"path,omitempty"`
+	Data      string `json:"data,omitempty"`
+	Error     string `json:"error,omitempty"`
+	Code      int    `json:"code,omitempty"`
+	Event     *Evt   `json:"event,omitempty"`
 }
 
 type Evt struct {
 	Path string `json:"path"`
 	Kind string `json:"kind"`
+}
+
+func errorCode(err error) int {
+	var pe *core.PosixError
+	if errors.As(err, &pe) {
+		switch pe.Code {
+		case core.ENOENT:
+			return http.StatusNotFound
+		case core.EACCES:
+			return http.StatusForbidden
+		case core.EEXIST:
+			return http.StatusConflict
+		case core.EINVAL:
+			return http.StatusBadRequest
+		case core.ETIMEDOUT:
+			return http.StatusRequestTimeout
+		}
+	}
+	return http.StatusInternalServerError
 }
 
 func (s *Server) handleWS(conn *websocket.Conn) {
@@ -128,16 +149,19 @@ func (s *Server) handleWS(conn *websocket.Conn) {
 			data, err := s.fs.Read(context.Background(), msg.Path, core.CallerIdentity{})
 			if err != nil {
 				reply.Error = err.Error()
+				reply.Code = errorCode(err)
 			} else {
 				reply.Data = string(data)
 			}
 		case "write":
 			if s.opts.ReadOnly {
 				reply.Error = "read-only filesystem"
+				reply.Code = http.StatusForbidden
 				break
 			}
 			if err := s.fs.Write(context.Background(), msg.Path, []byte(msg.Data), core.CallerIdentity{}); err != nil {
 				reply.Error = err.Error()
+				reply.Code = errorCode(err)
 			}
 		case "subscribe":
 			if unsub != nil {
@@ -165,6 +189,7 @@ func (s *Server) handleWS(conn *websocket.Conn) {
 			}
 		default:
 			reply.Error = "unknown op"
+			reply.Code = http.StatusBadRequest
 		}
 		if err := websocket.JSON.Send(conn, reply); err != nil {
 			return

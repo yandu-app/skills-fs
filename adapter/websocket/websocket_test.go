@@ -125,6 +125,9 @@ func TestWebSocketReadOnly(t *testing.T) {
 	if reply.Error != "read-only filesystem" {
 		t.Fatalf("expected read-only error, got: %+v", reply)
 	}
+	if reply.Code != http.StatusForbidden {
+		t.Fatalf("expected code 403, got %d", reply.Code)
+	}
 }
 
 func TestWebSocketDialTimeout(t *testing.T) {
@@ -154,6 +157,9 @@ func TestWebSocketDialTimeout(t *testing.T) {
 	}
 	if reply.Error != "unknown op" {
 		t.Fatalf("expected unknown op error, got: %+v", reply)
+	}
+	if reply.Code != http.StatusBadRequest {
+		t.Fatalf("expected code 400, got %d", reply.Code)
 	}
 }
 
