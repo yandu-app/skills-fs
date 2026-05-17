@@ -60,3 +60,27 @@ func TestMetricsEventBus(t *testing.T) {
 		t.Fatalf("expected 2 delivered (1 per emit with active subscriber), got:\n%s", out)
 	}
 }
+
+func TestMetricsExtendedGauges(t *testing.T) {
+	fs := NewFS(GlobalConfig{Breaker: CircuitBreakerConfig{Enabled: true}})
+	_ = fs.RegisterProvider(&fakeProvider{id: "p1"})
+	_ = fs.Mount("/a", MountEntry{Kind: KindBlob, Mode: 0o644, BlobData: []byte("x")})
+	_ = fs.Mount("/b", MountEntry{Kind: KindBlob, Mode: 0o644, BlobData: []byte("y")})
+
+	// Force a circuit breaker state for p1.
+	_ = fs.breakerOpen("p1")
+
+	out := string(fs.Prometheus())
+	if !strings.Contains(out, "skills_fs_mounts_total 2") {
+		t.Fatalf("expected mounts gauge, got:\n%s", out)
+	}
+	if !strings.Contains(out, "skills_fs_handles_active 0") {
+		t.Fatalf("expected handles gauge, got:\n%s", out)
+	}
+	if !strings.Contains(out, "skills_fs_providers_total 1") {
+		t.Fatalf("expected providers gauge, got:\n%s", out)
+	}
+	if !strings.Contains(out, `skills_fs_breaker_state{provider="p1"}`) {
+		t.Fatalf("expected breaker gauge, got:\n%s", out)
+	}
+}
