@@ -175,6 +175,10 @@ func (fs *FileSystem) Open(path string, flags OpenFlags, caller CallerIdentity) 
 		return nil, err
 	}
 	m := rm.mount
+	if !canAccessNamespace(caller, m) {
+		fs.mu.RUnlock()
+		return nil, posix(ENOENT, OpStat, path, nil)
+	}
 	if flags.Has(OpenRead) && !canAccess(caller, m.UID, m.GID, m.Mode, OpRead) {
 		fs.mu.RUnlock()
 		return nil, posix(EACCES, OpRead, path, nil)
