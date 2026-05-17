@@ -59,6 +59,14 @@ func (s *Server) Mount(ctx context.Context) error {
 
 	handler := middleware.RequestID(mux)
 	handler = middleware.AccessLog(slog.Default())(handler)
+	if s.opts.RateLimitRPS > 0 {
+		burst := s.opts.RateLimitBurst
+		if burst <= 0 {
+			burst = int(s.opts.RateLimitRPS)
+		}
+		rl := middleware.NewRateLimiter(s.opts.RateLimitRPS, burst)
+		handler = middleware.RateLimit(rl)(handler)
+	}
 
 	s.srv = &http.Server{
 		Addr:    s.addr,
