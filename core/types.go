@@ -92,6 +92,7 @@ type CapConfig struct {
 	ProviderID string
 	Action     string
 	ParamsFn   func(pathParams map[string]string, payload []byte, ctx OpContext) (map[string]interface{}, error)
+	Async      bool // when true, provider runs in background and empty result is returned immediately
 }
 
 type OpContext struct {

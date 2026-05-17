@@ -366,6 +366,10 @@ func (fs *FileSystem) Read(ctx context.Context, path string, caller CallerIdenti
 		if err != nil {
 			return nil, err
 		}
+		if cap.Async {
+			go invokeProvider(context.Background(), provider, cap, OpRead, path, params, nil, caller)
+			return []byte{}, nil
+		}
 		return invokeProvider(ctx, provider, cap, OpRead, path, params, nil, caller)
 	case KindLink:
 		target := []byte(m.LinkPath)
