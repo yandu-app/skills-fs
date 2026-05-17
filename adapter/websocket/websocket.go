@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -91,6 +92,23 @@ func (s *Server) checkOrigin(r *http.Request) bool {
 	return false
 }
 
+type wsConn struct {
+	*websocket.Conn
+	mu sync.Mutex
+}
+
+func (c *wsConn) WriteJSON(v interface{}) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.Conn.WriteJSON(v)
+}
+
+func (c *wsConn) WriteMessage(messageType int, data []byte) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.Conn.WriteMessage(messageType, data)
+}
+
 var upgrader = websocket.Upgrader{
 	EnableCompression: true,
 	ReadBufferSize:    4096,
@@ -99,10 +117,11 @@ var upgrader = websocket.Upgrader{
 
 func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	upgrader.CheckOrigin = func(req *http.Request) bool { return s.checkOrigin(req) }
-	conn, err := upgrader.Upgrade(w, r, nil)
+	ws, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return
 	}
+	conn := &wsConn{Conn: ws}
 	defer conn.Close()
 	s.conns.Add(1)
 	defer s.conns.Add(-1)
@@ -224,7 +243,7 @@ func errorCode(err error) int {
 	return http.StatusInternalServerError
 }
 
-func (s *Server) processOp(conn *websocket.Conn, subs map[string]func(), msg WsMsg, batch bool) (WsReply, bool) {
+func (s *Server) processOp(conn *wsConn, subs map[string]func(), msg WsMsg, batch bool) (WsReply, bool) {
 	reply := WsReply{Op: msg.Op, Path: msg.Path, SubID: msg.SubID}
 	switch msg.Op {
 	case "read":
