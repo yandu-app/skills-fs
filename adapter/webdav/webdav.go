@@ -118,7 +118,7 @@ func (s *Server) Unmount(ctx context.Context) error {
 func (s *Server) handleWebDAV(w http.ResponseWriter, r *http.Request) {
 	if s.opts.ReadOnly {
 		switch r.Method {
-		case http.MethodPut, http.MethodDelete, http.MethodPatch, http.MethodPost, "MKCOL", "COPY", "MOVE", "LOCK", "UNLOCK":
+		case http.MethodPut, http.MethodDelete, http.MethodPatch, http.MethodPost, "MKCOL", "COPY", "MOVE", "LOCK", "UNLOCK", "PROPPATCH":
 			http.Error(w, "read-only filesystem", http.StatusForbidden)
 			return
 		}
@@ -160,6 +160,8 @@ func (s *Server) handleWebDAV(w http.ResponseWriter, r *http.Request) {
 		s.handleMove(w, r, path, caller)
 	case "PROPFIND":
 		s.handlePropfind(w, r, path, caller)
+	case "PROPPATCH":
+		s.handleProppatch(w, r, path, caller)
 	case "LOCK":
 		s.handleLock(w, r, path, caller)
 	case "UNLOCK":
@@ -167,7 +169,7 @@ func (s *Server) handleWebDAV(w http.ResponseWriter, r *http.Request) {
 	case http.MethodOptions:
 		s.handleOptions(w, r)
 	default:
-		w.Header().Set("Allow", "GET, HEAD, PUT, DELETE, MKCOL, COPY, MOVE, PROPFIND, OPTIONS, LOCK, UNLOCK")
+		w.Header().Set("Allow", "GET, HEAD, PUT, DELETE, MKCOL, COPY, MOVE, PROPFIND, PROPPATCH, OPTIONS, LOCK, UNLOCK")
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
 }
@@ -223,7 +225,7 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleOptions(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Allow", "GET, HEAD, PUT, DELETE, MKCOL, COPY, MOVE, PROPFIND, OPTIONS")
+	w.Header().Set("Allow", "GET, HEAD, PUT, DELETE, MKCOL, COPY, MOVE, PROPFIND, PROPPATCH, OPTIONS")
 	w.Header().Set("DAV", "1, 2")
 	w.WriteHeader(http.StatusOK)
 }
@@ -376,6 +378,25 @@ func (s *Server) handlePropfind(w http.ResponseWriter, r *http.Request, p string
 	}
 
 	ms := multistatus{XmlnsD: "DAV:", Responses: entries}
+	w.Header().Set("Content-Type", "text/xml; charset=utf-8")
+	w.WriteHeader(http.StatusMultiStatus)
+	xml.NewEncoder(w).Encode(ms)
+}
+
+func (s *Server) handleProppatch(w http.ResponseWriter, r *http.Request, p string, caller core.CallerIdentity) {
+	if s.opts.ReadOnly {
+		http.Error(w, "read-only filesystem", http.StatusForbidden)
+		return
+	}
+	// Stub: accept all property updates without parsing the request body.
+	resp := response{
+		Href: p,
+		Propstat: propstat{
+			Prop:   prop{},
+			Status: "HTTP/1.1 200 OK",
+		},
+	}
+	ms := multistatus{XmlnsD: "DAV:", Responses: []response{resp}}
 	w.Header().Set("Content-Type", "text/xml; charset=utf-8")
 	w.WriteHeader(http.StatusMultiStatus)
 	xml.NewEncoder(w).Encode(ms)
