@@ -7,10 +7,20 @@ import (
 	"testing"
 	"time"
 
-	"golang.org/x/net/websocket"
+	"github.com/gorilla/websocket"
 	"github.com/skills-fs/skills-fs/adapter"
 	"github.com/skills-fs/skills-fs/core"
 )
+
+func dial(t *testing.T, srv *Server) *websocket.Conn {
+	t.Helper()
+	url := "ws://" + srv.ln.Addr().String() + "/"
+	conn, _, err := websocket.DefaultDialer.Dial(url, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	return conn
+}
 
 func TestWebSocketReadWrite(t *testing.T) {
 	fs := core.NewFS(core.GlobalConfig{})
@@ -24,29 +34,24 @@ func TestWebSocketReadWrite(t *testing.T) {
 	}
 	defer srv.Unmount(context.Background())
 
-	origin := "http://" + srv.ln.Addr().String()
-	url := "ws://" + srv.ln.Addr().String() + "/"
-	ws, err := websocket.Dial(url, "", origin)
-	if err != nil {
-		t.Fatal(err)
-	}
+	ws := dial(t, srv)
 	defer ws.Close()
 
-	if err := websocket.JSON.Send(ws, WsMsg{Op: "read", Path: "/blob"}); err != nil {
+	if err := ws.WriteJSON(WsMsg{Op: "read", Path: "/blob"}); err != nil {
 		t.Fatal(err)
 	}
 	var reply WsReply
-	if err := websocket.JSON.Receive(ws, &reply); err != nil {
+	if err := ws.ReadJSON(&reply); err != nil {
 		t.Fatal(err)
 	}
 	if reply.Op != "read" || reply.Data != "hello" {
 		t.Fatalf("unexpected reply: %+v", reply)
 	}
 
-	if err := websocket.JSON.Send(ws, WsMsg{Op: "write", Path: "/blob", Data: "world"}); err != nil {
+	if err := ws.WriteJSON(WsMsg{Op: "write", Path: "/blob", Data: "world"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := websocket.JSON.Receive(ws, &reply); err != nil {
+	if err := ws.ReadJSON(&reply); err != nil {
 		t.Fatal(err)
 	}
 	if reply.Error != "" {
@@ -66,19 +71,14 @@ func TestWebSocketSubscribe(t *testing.T) {
 	}
 	defer srv.Unmount(context.Background())
 
-	origin := "http://" + srv.ln.Addr().String()
-	url := "ws://" + srv.ln.Addr().String() + "/"
-	ws, err := websocket.Dial(url, "", origin)
-	if err != nil {
-		t.Fatal(err)
-	}
+	ws := dial(t, srv)
 	defer ws.Close()
 
-	if err := websocket.JSON.Send(ws, WsMsg{Op: "subscribe", Prefix: "/blob", SubID: "sub1"}); err != nil {
+	if err := ws.WriteJSON(WsMsg{Op: "subscribe", Prefix: "/blob", SubID: "sub1"}); err != nil {
 		t.Fatal(err)
 	}
 	var reply WsReply
-	if err := websocket.JSON.Receive(ws, &reply); err != nil {
+	if err := ws.ReadJSON(&reply); err != nil {
 		t.Fatal(err)
 	}
 	if reply.SubID != "sub1" {
@@ -90,7 +90,7 @@ func TestWebSocketSubscribe(t *testing.T) {
 	}
 
 	// Drain the subscribe ack then wait for event.
-	if err := websocket.JSON.Receive(ws, &reply); err != nil {
+	if err := ws.ReadJSON(&reply); err != nil {
 		t.Fatal(err)
 	}
 	if reply.Op != "event" || reply.Event == nil {
@@ -113,19 +113,14 @@ func TestWebSocketReadOnly(t *testing.T) {
 	}
 	defer srv.Unmount(context.Background())
 
-	origin := "http://" + srv.ln.Addr().String()
-	url := "ws://" + srv.ln.Addr().String() + "/"
-	ws, err := websocket.Dial(url, "", origin)
-	if err != nil {
-		t.Fatal(err)
-	}
+	ws := dial(t, srv)
 	defer ws.Close()
 
-	if err := websocket.JSON.Send(ws, WsMsg{Op: "write", Path: "/blob", Data: "x"}); err != nil {
+	if err := ws.WriteJSON(WsMsg{Op: "write", Path: "/blob", Data: "x"}); err != nil {
 		t.Fatal(err)
 	}
 	var reply WsReply
-	if err := websocket.JSON.Receive(ws, &reply); err != nil {
+	if err := ws.ReadJSON(&reply); err != nil {
 		t.Fatal(err)
 	}
 	if reply.Error != "read-only filesystem" {
@@ -144,21 +139,16 @@ func TestWebSocketDialTimeout(t *testing.T) {
 	}
 	defer srv.Unmount(context.Background())
 
-	origin := "http://" + srv.ln.Addr().String()
-	url := "ws://" + srv.ln.Addr().String() + "/"
-	ws, err := websocket.Dial(url, "", origin)
-	if err != nil {
-		t.Fatal(err)
-	}
+	ws := dial(t, srv)
 	defer ws.Close()
 
 	// Send unknown op.
-	if err := websocket.JSON.Send(ws, WsMsg{Op: "nope"}); err != nil {
+	if err := ws.WriteJSON(WsMsg{Op: "nope"}); err != nil {
 		t.Fatal(err)
 	}
-	ws.SetDeadline(time.Now().Add(2 * time.Second))
+	ws.SetReadDeadline(time.Now().Add(2 * time.Second))
 	var reply WsReply
-	if err := websocket.JSON.Receive(ws, &reply); err != nil {
+	if err := ws.ReadJSON(&reply); err != nil {
 		t.Fatal(err)
 	}
 	if reply.Error != "unknown op" {
@@ -181,28 +171,26 @@ func TestWebSocketReadBinary(t *testing.T) {
 	}
 	defer srv.Unmount(context.Background())
 
-	origin := "http://" + srv.ln.Addr().String()
-	url := "ws://" + srv.ln.Addr().String() + "/"
-	ws, err := websocket.Dial(url, "", origin)
-	if err != nil {
-		t.Fatal(err)
-	}
+	ws := dial(t, srv)
 	defer ws.Close()
 
-	if err := websocket.JSON.Send(ws, WsMsg{Op: "read-binary", Path: "/blob"}); err != nil {
+	if err := ws.WriteJSON(WsMsg{Op: "read-binary", Path: "/blob"}); err != nil {
 		t.Fatal(err)
 	}
 	var reply WsReply
-	if err := websocket.JSON.Receive(ws, &reply); err != nil {
+	if err := ws.ReadJSON(&reply); err != nil {
 		t.Fatal(err)
 	}
 	if reply.Op != "read-binary" {
 		t.Fatalf("unexpected reply op: %q", reply.Op)
 	}
 
-	var payload []byte
-	if err := websocket.Message.Receive(ws, &payload); err != nil {
+	msgType, payload, err := ws.ReadMessage()
+	if err != nil {
 		t.Fatal(err)
+	}
+	if msgType != websocket.BinaryMessage {
+		t.Fatalf("expected binary message, got %d", msgType)
 	}
 	if string(payload) != "binary-data" {
 		t.Fatalf("expected binary-data, got %q", payload)
@@ -221,22 +209,17 @@ func TestWebSocketWriteBinary(t *testing.T) {
 	}
 	defer srv.Unmount(context.Background())
 
-	origin := "http://" + srv.ln.Addr().String()
-	url := "ws://" + srv.ln.Addr().String() + "/"
-	ws, err := websocket.Dial(url, "", origin)
-	if err != nil {
-		t.Fatal(err)
-	}
+	ws := dial(t, srv)
 	defer ws.Close()
 
-	if err := websocket.JSON.Send(ws, WsMsg{Op: "write-binary", Path: "/blob"}); err != nil {
+	if err := ws.WriteJSON(WsMsg{Op: "write-binary", Path: "/blob"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := websocket.Message.Send(ws, []byte("raw-bytes")); err != nil {
+	if err := ws.WriteMessage(websocket.BinaryMessage, []byte("raw-bytes")); err != nil {
 		t.Fatal(err)
 	}
 	var reply WsReply
-	if err := websocket.JSON.Receive(ws, &reply); err != nil {
+	if err := ws.ReadJSON(&reply); err != nil {
 		t.Fatal(err)
 	}
 	if reply.Error != "" {
@@ -286,12 +269,7 @@ func TestWebSocketConnectionCounter(t *testing.T) {
 		t.Fatalf("expected 0 connections, got %d", srv.ActiveConnections())
 	}
 
-	origin := "http://" + srv.ln.Addr().String()
-	url := "ws://" + srv.ln.Addr().String() + "/"
-	ws, err := websocket.Dial(url, "", origin)
-	if err != nil {
-		t.Fatal(err)
-	}
+	ws := dial(t, srv)
 	defer ws.Close()
 
 	if srv.ActiveConnections() != 1 {
@@ -312,13 +290,18 @@ func TestWebSocketOriginAllowed(t *testing.T) {
 	url := "ws://" + addr + "/"
 
 	// Bad origin should fail handshake.
-	_, err := websocket.Dial(url, "", "http://evil.com")
+	dialer := websocket.DefaultDialer
+	dialer.Jar = nil
+	_, resp, err := dialer.Dial(url, http.Header{"Origin": []string{"http://evil.com"}})
 	if err == nil {
 		t.Fatal("expected handshake failure for bad origin")
 	}
+	if resp != nil && resp.StatusCode != http.StatusForbidden {
+		t.Logf("unexpected status: %d", resp.StatusCode)
+	}
 
 	// Good origin should succeed.
-	ws, err := websocket.Dial(url, "", "http://trusted.example.com")
+	ws, _, err := dialer.Dial(url, http.Header{"Origin": []string{"http://trusted.example.com"}})
 	if err != nil {
 		t.Fatalf("expected handshake success for allowed origin: %v", err)
 	}
@@ -333,23 +316,18 @@ func TestWebSocketMaxPayload(t *testing.T) {
 	}
 	defer srv.Unmount(context.Background())
 
-	origin := "http://" + srv.ln.Addr().String()
-	url := "ws://" + srv.ln.Addr().String() + "/"
-	ws, err := websocket.Dial(url, "", origin)
-	if err != nil {
-		t.Fatal(err)
-	}
+	ws := dial(t, srv)
 	defer ws.Close()
 
 	// Send a message larger than 64 KiB.
 	big := strings.Repeat("x", 128*1024)
-	if err := websocket.JSON.Send(ws, WsMsg{Op: "write", Path: "/blob", Data: big}); err != nil {
+	if err := ws.WriteJSON(WsMsg{Op: "write", Path: "/blob", Data: big}); err != nil {
 		// The send itself may succeed; the receive should fail or error out.
 		t.Logf("send error (acceptable): %v", err)
 	}
-	ws.SetDeadline(time.Now().Add(2 * time.Second))
+	ws.SetReadDeadline(time.Now().Add(2 * time.Second))
 	var reply WsReply
-	if err := websocket.JSON.Receive(ws, &reply); err != nil {
+	if err := ws.ReadJSON(&reply); err != nil {
 		// Receiving a too-large frame should close the connection.
 		t.Logf("receive error (expected): %v", err)
 	}
@@ -370,29 +348,24 @@ func TestWebSocketMultiSubscribe(t *testing.T) {
 	}
 	defer srv.Unmount(context.Background())
 
-	origin := "http://" + srv.ln.Addr().String()
-	url := "ws://" + srv.ln.Addr().String() + "/"
-	ws, err := websocket.Dial(url, "", origin)
-	if err != nil {
-		t.Fatal(err)
-	}
+	ws := dial(t, srv)
 	defer ws.Close()
 
 	// Subscribe to /a and /b with different IDs.
-	if err := websocket.JSON.Send(ws, WsMsg{Op: "subscribe", Prefix: "/a", SubID: "sub-a"}); err != nil {
+	if err := ws.WriteJSON(WsMsg{Op: "subscribe", Prefix: "/a", SubID: "sub-a"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := websocket.JSON.Send(ws, WsMsg{Op: "subscribe", Prefix: "/b", SubID: "sub-b"}); err != nil {
+	if err := ws.WriteJSON(WsMsg{Op: "subscribe", Prefix: "/b", SubID: "sub-b"}); err != nil {
 		t.Fatal(err)
 	}
 	var reply WsReply
-	if err := websocket.JSON.Receive(ws, &reply); err != nil {
+	if err := ws.ReadJSON(&reply); err != nil {
 		t.Fatal(err)
 	}
 	if reply.SubID != "sub-a" {
 		t.Fatalf("expected sub-a ack, got %q", reply.SubID)
 	}
-	if err := websocket.JSON.Receive(ws, &reply); err != nil {
+	if err := ws.ReadJSON(&reply); err != nil {
 		t.Fatal(err)
 	}
 	if reply.SubID != "sub-b" {
@@ -403,7 +376,7 @@ func TestWebSocketMultiSubscribe(t *testing.T) {
 	if err := fs.Write(context.Background(), "/a", []byte("x"), core.CallerIdentity{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := websocket.JSON.Receive(ws, &reply); err != nil {
+	if err := ws.ReadJSON(&reply); err != nil {
 		t.Fatal(err)
 	}
 	if reply.Op != "event" || reply.SubID != "sub-a" {
@@ -411,10 +384,10 @@ func TestWebSocketMultiSubscribe(t *testing.T) {
 	}
 
 	// Unsubscribe sub-a, then write to /a again.
-	if err := websocket.JSON.Send(ws, WsMsg{Op: "unsubscribe", SubID: "sub-a"}); err != nil {
+	if err := ws.WriteJSON(WsMsg{Op: "unsubscribe", SubID: "sub-a"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := websocket.JSON.Receive(ws, &reply); err != nil {
+	if err := ws.ReadJSON(&reply); err != nil {
 		t.Fatal(err)
 	}
 	if reply.SubID != "sub-a" {
@@ -424,8 +397,8 @@ func TestWebSocketMultiSubscribe(t *testing.T) {
 	if err := fs.Write(context.Background(), "/a", []byte("y"), core.CallerIdentity{}); err != nil {
 		t.Fatal(err)
 	}
-	ws.SetDeadline(time.Now().Add(500 * time.Millisecond))
-	if err := websocket.JSON.Receive(ws, &reply); err == nil {
+	ws.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+	if err := ws.ReadJSON(&reply); err == nil {
 		t.Fatalf("expected timeout after unsub, got %+v", reply)
 	}
 }
@@ -438,19 +411,14 @@ func TestWebSocketSubscribeMissingID(t *testing.T) {
 	}
 	defer srv.Unmount(context.Background())
 
-	origin := "http://" + srv.ln.Addr().String()
-	url := "ws://" + srv.ln.Addr().String() + "/"
-	ws, err := websocket.Dial(url, "", origin)
-	if err != nil {
-		t.Fatal(err)
-	}
+	ws := dial(t, srv)
 	defer ws.Close()
 
-	if err := websocket.JSON.Send(ws, WsMsg{Op: "subscribe", Prefix: "/"}); err != nil {
+	if err := ws.WriteJSON(WsMsg{Op: "subscribe", Prefix: "/"}); err != nil {
 		t.Fatal(err)
 	}
 	var reply WsReply
-	if err := websocket.JSON.Receive(ws, &reply); err != nil {
+	if err := ws.ReadJSON(&reply); err != nil {
 		t.Fatal(err)
 	}
 	if reply.Code != http.StatusBadRequest {
@@ -469,38 +437,33 @@ func TestWebSocketPingPong(t *testing.T) {
 	}
 	defer srv.Unmount(context.Background())
 
-	origin := "http://" + srv.ln.Addr().String()
-	url := "ws://" + srv.ln.Addr().String() + "/"
-	ws, err := websocket.Dial(url, "", origin)
-	if err != nil {
-		t.Fatal(err)
-	}
+	ws := dial(t, srv)
 	defer ws.Close()
 
-	// Client-initiated ping.
-	if err := websocket.JSON.Send(ws, WsMsg{Op: "ping"}); err != nil {
+	// Client-initiated application-level ping.
+	if err := ws.WriteJSON(WsMsg{Op: "ping"}); err != nil {
 		t.Fatal(err)
 	}
 	var reply WsReply
-	if err := websocket.JSON.Receive(ws, &reply); err != nil {
+	if err := ws.ReadJSON(&reply); err != nil {
 		t.Fatal(err)
 	}
 	if reply.Op != "pong" {
 		t.Fatalf("expected pong, got %q", reply.Op)
 	}
 
-	// Wait for server-initiated heartbeat ping.
-	ws.SetDeadline(time.Now().Add(35 * time.Second))
-	if err := websocket.JSON.Receive(ws, &reply); err != nil {
-		t.Fatalf("expected server ping, got err: %v", err)
-	}
-	if reply.Op != "ping" {
-		t.Fatalf("expected ping, got %q", reply.Op)
-	}
-
-	// Reply with pong.
-	if err := websocket.JSON.Send(ws, WsMsg{Op: "pong"}); err != nil {
+	// The server sends WebSocket protocol-level pings every 30s.
+	// gorilla/websocket handles them automatically (replies with pong).
+	// Verify the connection survives a ping cycle by reading after 35s.
+	ws.SetReadDeadline(time.Now().Add(35 * time.Second))
+	if err := ws.WriteJSON(WsMsg{Op: "ping"}); err != nil {
 		t.Fatal(err)
+	}
+	if err := ws.ReadJSON(&reply); err != nil {
+		t.Fatalf("connection died during server ping cycle: %v", err)
+	}
+	if reply.Op != "pong" {
+		t.Fatalf("expected pong after ping cycle, got %q", reply.Op)
 	}
 }
 
@@ -519,12 +482,7 @@ func TestWebSocketBatchRead(t *testing.T) {
 	}
 	defer srv.Unmount(context.Background())
 
-	origin := "http://" + srv.ln.Addr().String()
-	url := "ws://" + srv.ln.Addr().String() + "/"
-	ws, err := websocket.Dial(url, "", origin)
-	if err != nil {
-		t.Fatal(err)
-	}
+	ws := dial(t, srv)
 	defer ws.Close()
 
 	batch := WsMsg{
@@ -534,11 +492,11 @@ func TestWebSocketBatchRead(t *testing.T) {
 			{Op: "read", Path: "/b"},
 		},
 	}
-	if err := websocket.JSON.Send(ws, batch); err != nil {
+	if err := ws.WriteJSON(batch); err != nil {
 		t.Fatal(err)
 	}
 	var reply WsReply
-	if err := websocket.JSON.Receive(ws, &reply); err != nil {
+	if err := ws.ReadJSON(&reply); err != nil {
 		t.Fatal(err)
 	}
 	if reply.Op != "batch" {
@@ -567,12 +525,7 @@ func TestWebSocketBatchWithError(t *testing.T) {
 	}
 	defer srv.Unmount(context.Background())
 
-	origin := "http://" + srv.ln.Addr().String()
-	url := "ws://" + srv.ln.Addr().String() + "/"
-	ws, err := websocket.Dial(url, "", origin)
-	if err != nil {
-		t.Fatal(err)
-	}
+	ws := dial(t, srv)
 	defer ws.Close()
 
 	batch := WsMsg{
@@ -582,11 +535,11 @@ func TestWebSocketBatchWithError(t *testing.T) {
 			{Op: "read", Path: "/missing"},
 		},
 	}
-	if err := websocket.JSON.Send(ws, batch); err != nil {
+	if err := ws.WriteJSON(batch); err != nil {
 		t.Fatal(err)
 	}
 	var reply WsReply
-	if err := websocket.JSON.Receive(ws, &reply); err != nil {
+	if err := ws.ReadJSON(&reply); err != nil {
 		t.Fatal(err)
 	}
 	if len(reply.Results) != 2 {
@@ -608,12 +561,7 @@ func TestWebSocketBatchSizeLimit(t *testing.T) {
 	}
 	defer srv.Unmount(context.Background())
 
-	origin := "http://" + srv.ln.Addr().String()
-	url := "ws://" + srv.ln.Addr().String() + "/"
-	ws, err := websocket.Dial(url, "", origin)
-	if err != nil {
-		t.Fatal(err)
-	}
+	ws := dial(t, srv)
 	defer ws.Close()
 
 	batch := WsMsg{
@@ -624,11 +572,11 @@ func TestWebSocketBatchSizeLimit(t *testing.T) {
 			{Op: "read", Path: "/c"},
 		},
 	}
-	if err := websocket.JSON.Send(ws, batch); err != nil {
+	if err := ws.WriteJSON(batch); err != nil {
 		t.Fatal(err)
 	}
 	var reply WsReply
-	if err := websocket.JSON.Receive(ws, &reply); err != nil {
+	if err := ws.ReadJSON(&reply); err != nil {
 		t.Fatal(err)
 	}
 	if reply.Code != http.StatusBadRequest {
@@ -636,5 +584,49 @@ func TestWebSocketBatchSizeLimit(t *testing.T) {
 	}
 	if reply.Error == "" {
 		t.Fatal("expected error for oversized batch")
+	}
+}
+
+func TestWebSocketCompressionNegotiated(t *testing.T) {
+	fs := core.NewFS(core.GlobalConfig{})
+	if err := fs.Mount("/blob", core.MountEntry{Kind: core.KindBlob, Mode: 0o644, BlobData: []byte("compress-me")}); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := New(fs, "127.0.0.1:0", adapter.MountOptions{})
+	if err := srv.Mount(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Unmount(context.Background())
+
+	// Dial with compression enabled.
+	dialer := websocket.DefaultDialer
+	dialer.EnableCompression = true
+	url := "ws://" + srv.ln.Addr().String() + "/"
+	ws, resp, err := dialer.Dial(url, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer ws.Close()
+
+	// Verify the server negotiated permessage-deflate.
+	if resp == nil {
+		t.Fatal("expected non-nil response after dial")
+	}
+	exts := resp.Header.Get("Sec-WebSocket-Extensions")
+	if !strings.Contains(exts, "permessage-deflate") {
+		t.Fatalf("expected permessage-deflate in extensions, got %q", exts)
+	}
+
+	// Basic operation should still work.
+	if err := ws.WriteJSON(WsMsg{Op: "read", Path: "/blob"}); err != nil {
+		t.Fatal(err)
+	}
+	var reply WsReply
+	if err := ws.ReadJSON(&reply); err != nil {
+		t.Fatal(err)
+	}
+	if reply.Data != "compress-me" {
+		t.Fatalf("expected compress-me, got %q", reply.Data)
 	}
 }

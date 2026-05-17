@@ -10,13 +10,14 @@ import (
 	"sync/atomic"
 	"time"
 
-	"golang.org/x/net/websocket"
+	"github.com/gorilla/websocket"
 	"github.com/skills-fs/skills-fs/adapter"
 	"github.com/skills-fs/skills-fs/adapter/middleware"
 	"github.com/skills-fs/skills-fs/core"
 )
 
-// Server streams filesystem operations over WebSocket.
+// Server streams filesystem operations over WebSocket with optional
+// per-message deflate compression (RFC 7692).
 type Server struct {
 	fs    *core.FileSystem
 	addr  string
@@ -37,9 +38,9 @@ func (s *Server) Addr() string {
 	}
 	return s.addr
 }
-func (s *Server) FileSystem() *core.FileSystem { return s.fs }
-func (s *Server) Options() adapter.MountOptions { return s.opts }
-func (s *Server) ActiveConnections() int32     { return s.conns.Load() }
+func (s *Server) FileSystem() *core.FileSystem      { return s.fs }
+func (s *Server) Options() adapter.MountOptions      { return s.opts }
+func (s *Server) ActiveConnections() int32           { return s.conns.Load() }
 
 func (s *Server) Mount(ctx context.Context) error {
 	mux := http.NewServeMux()
@@ -48,17 +49,14 @@ func (s *Server) Mount(ctx context.Context) error {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok\n"))
 	})
-	wsSrv := websocket.Server{
-		Handshake: s.checkOrigin,
-		Handler:   s.handleWS,
-	}
-	handler := middleware.CORS(s.opts.CORSOrigins)(wsSrv)
+	mux.HandleFunc("/", s.handleWS)
+
+	handler := middleware.CORS(s.opts.CORSOrigins)(mux)
 	if cl := middleware.NewConnLimiter(s.opts.MaxConnections); cl != nil {
 		handler = middleware.ConnLimit(cl)(handler)
 	}
-	mux.Handle("/", handler)
 
-	s.srv = &http.Server{Addr: s.addr, Handler: mux}
+	s.srv = &http.Server{Addr: s.addr, Handler: handler}
 	ln, err := net.Listen("tcp", s.addr)
 	if err != nil {
 		return err
@@ -68,22 +66,6 @@ func (s *Server) Mount(ctx context.Context) error {
 	return nil
 }
 
-func (s *Server) checkOrigin(cfg *websocket.Config, req *http.Request) error {
-	if len(s.opts.AllowedOrigins) == 0 {
-		return nil
-	}
-	origin := req.Header.Get("Origin")
-	if origin == "" {
-		origin = req.Header.Get("Sec-WebSocket-Origin")
-	}
-	for _, allowed := range s.opts.AllowedOrigins {
-		if strings.EqualFold(origin, allowed) {
-			return nil
-		}
-	}
-	return fmt.Errorf("origin %q not allowed", origin)
-}
-
 func (s *Server) Unmount(ctx context.Context) error {
 	if s.srv == nil {
 		return nil
@@ -91,6 +73,111 @@ func (s *Server) Unmount(ctx context.Context) error {
 	ctx, cancel := s.opts.ShutdownContext(ctx)
 	defer cancel()
 	return s.srv.Shutdown(ctx)
+}
+
+func (s *Server) checkOrigin(r *http.Request) bool {
+	if len(s.opts.AllowedOrigins) == 0 {
+		return true
+	}
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		origin = r.Header.Get("Sec-WebSocket-Origin")
+	}
+	for _, allowed := range s.opts.AllowedOrigins {
+		if strings.EqualFold(origin, allowed) {
+			return true
+		}
+	}
+	return false
+}
+
+var upgrader = websocket.Upgrader{
+	EnableCompression: true,
+	ReadBufferSize:    4096,
+	WriteBufferSize:   4096,
+}
+
+func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
+	upgrader.CheckOrigin = func(req *http.Request) bool { return s.checkOrigin(req) }
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		return
+	}
+	defer conn.Close()
+	s.conns.Add(1)
+	defer s.conns.Add(-1)
+
+	conn.SetReadLimit(64 * 1024) // 64 KiB max message size
+	conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+	conn.SetPongHandler(func(string) error {
+		conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+		return nil
+	})
+
+	subs := make(map[string]func())
+	defer func() {
+		for _, unsub := range subs {
+			unsub()
+		}
+	}()
+
+	// Heartbeat: send WebSocket ping every 30s.
+	stopHeartbeat := make(chan struct{})
+	defer close(stopHeartbeat)
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+				if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+					return
+				}
+			case <-stopHeartbeat:
+				return
+			}
+		}
+	}()
+
+	for {
+		var msg WsMsg
+		if err := conn.ReadJSON(&msg); err != nil {
+			return
+		}
+		conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+
+		if msg.Op == "batch" {
+			maxBatch := s.opts.MaxBatchSize
+			if maxBatch == 0 {
+				maxBatch = 32
+			}
+			if len(msg.Ops) > maxBatch {
+				reply := WsReply{Op: "batch", Error: fmt.Sprintf("batch size exceeds %d", maxBatch), Code: http.StatusBadRequest}
+				conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+				conn.WriteJSON(reply)
+				continue
+			}
+			results := make([]WsReply, 0, len(msg.Ops))
+			for _, sub := range msg.Ops {
+				r, _ := s.processOp(conn, subs, sub, true)
+				results = append(results, r)
+			}
+			conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+			if err := conn.WriteJSON(WsReply{Op: "batch", Results: results, SubID: msg.SubID}); err != nil {
+				return
+			}
+			continue
+		}
+		reply, sent := s.processOp(conn, subs, msg, false)
+		if sent || msg.Op == "pong" {
+			continue
+		}
+		conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+		if err := conn.WriteJSON(reply); err != nil {
+			return
+		}
+	}
 }
 
 type WsMsg struct {
@@ -137,75 +224,6 @@ func errorCode(err error) int {
 	return http.StatusInternalServerError
 }
 
-func (s *Server) handleWS(conn *websocket.Conn) {
-	defer conn.Close()
-	s.conns.Add(1)
-	defer s.conns.Add(-1)
-	conn.MaxPayloadBytes = 64 * 1024 // 64 KiB max message size
-	subs := make(map[string]func())
-	defer func() {
-		for _, unsub := range subs {
-			unsub()
-		}
-	}()
-
-	// Heartbeat: send application-level ping every 30s.
-	stopHeartbeat := make(chan struct{})
-	defer close(stopHeartbeat)
-	go func() {
-		ticker := time.NewTicker(30 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
-				if err := websocket.JSON.Send(conn, WsReply{Op: "ping"}); err != nil {
-					return
-				}
-			case <-stopHeartbeat:
-				return
-			}
-		}
-	}()
-
-	for {
-		conn.SetReadDeadline(time.Now().Add(60 * time.Second))
-		var msg WsMsg
-		if err := websocket.JSON.Receive(conn, &msg); err != nil {
-			return
-		}
-		if msg.Op == "batch" {
-			maxBatch := s.opts.MaxBatchSize
-			if maxBatch == 0 {
-				maxBatch = 32
-			}
-			if len(msg.Ops) > maxBatch {
-				reply := WsReply{Op: "batch", Error: fmt.Sprintf("batch size exceeds %d", maxBatch), Code: http.StatusBadRequest}
-				if err := websocket.JSON.Send(conn, reply); err != nil {
-					return
-				}
-				continue
-			}
-			results := make([]WsReply, 0, len(msg.Ops))
-			for _, sub := range msg.Ops {
-				r, _ := s.processOp(conn, subs, sub, true)
-				results = append(results, r)
-			}
-			if err := websocket.JSON.Send(conn, WsReply{Op: "batch", Results: results, SubID: msg.SubID}); err != nil {
-				return
-			}
-			continue
-		}
-		reply, sent := s.processOp(conn, subs, msg, false)
-		if sent || msg.Op == "pong" {
-			continue
-		}
-		if err := websocket.JSON.Send(conn, reply); err != nil {
-			return
-		}
-	}
-}
-
 func (s *Server) processOp(conn *websocket.Conn, subs map[string]func(), msg WsMsg, batch bool) (WsReply, bool) {
 	reply := WsReply{Op: msg.Op, Path: msg.Path, SubID: msg.SubID}
 	switch msg.Op {
@@ -238,11 +256,12 @@ func (s *Server) processOp(conn *websocket.Conn, subs map[string]func(), msg WsM
 			reply.Data = string(data)
 			break
 		}
-		if err := websocket.JSON.Send(conn, reply); err != nil {
+		conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+		if err := conn.WriteJSON(reply); err != nil {
 			return reply, true
 		}
 		conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-		if err := websocket.Message.Send(conn, data); err != nil {
+		if err := conn.WriteMessage(websocket.BinaryMessage, data); err != nil {
 			return reply, true
 		}
 		return reply, true
@@ -260,9 +279,14 @@ func (s *Server) processOp(conn *websocket.Conn, subs map[string]func(), msg WsM
 			break
 		}
 		conn.SetReadDeadline(time.Now().Add(10 * time.Second))
-		var payload []byte
-		if err := websocket.Message.Receive(conn, &payload); err != nil {
+		msgType, payload, err := conn.ReadMessage()
+		if err != nil {
 			return reply, true
+		}
+		if msgType != websocket.BinaryMessage {
+			reply.Error = "expected binary message"
+			reply.Code = http.StatusBadRequest
+			break
 		}
 		if err := s.fs.Write(context.Background(), msg.Path, payload, core.CallerIdentity{}); err != nil {
 			reply.Error = err.Error()
@@ -287,7 +311,8 @@ func (s *Server) processOp(conn *websocket.Conn, subs map[string]func(), msg WsM
 		}, msg.Prefix)
 		go func() {
 			for e := range ch {
-				websocket.JSON.Send(conn, WsReply{
+				conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+				conn.WriteJSON(WsReply{
 					Op:    "event",
 					SubID: subID,
 					Event: &Evt{Path: e.Path, Kind: fmt.Sprint(e.Kind)},
