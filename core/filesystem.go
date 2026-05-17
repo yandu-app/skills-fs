@@ -67,21 +67,21 @@ func normalizePath(p string) (string, error) {
 }
 
 type FileSystem struct {
-	cfg        GlobalConfig
-	router     *router
-	providers  map[string]Provider
-	handles    *handleManager
-	locks      *lockManager
-	streams    *streamManager
-	metrics    *Metrics
-	skills     *SkillGenerator
-	events     *eventBus
-	bufPool    sync.Pool
-	breakers   map[string]*circuitBreaker
-	breakersMu sync.Mutex
+	cfg             GlobalConfig
+	router          *router
+	providers       map[string]Provider
+	handles         *handleManager
+	locks           *lockManager
+	streams         *streamManager
+	metrics         *Metrics
+	skills          *SkillGenerator
+	events          *eventBus
+	bufPool         sync.Pool
+	breakers        map[string]*circuitBreaker
+	breakersMu      sync.Mutex
 	providerCacheMu sync.Mutex
 	providerCache   map[string]providerCacheEntry
-	mu         sync.RWMutex
+	mu              sync.RWMutex
 }
 
 type providerCacheEntry struct {
@@ -92,15 +92,15 @@ type providerCacheEntry struct {
 func NewFS(cfg GlobalConfig) *FileSystem {
 	cfg = cfg.withDefaults()
 	fs := &FileSystem{
-		cfg:       cfg,
-		router:    newRouter(),
-		providers: make(map[string]Provider),
-		handles:   newHandleManager(cfg.MaxOpenHandles),
-		locks:     newLockManager(cfg.LockTimeout),
-		streams:   newStreamManager(),
-		metrics:   newMetrics(),
-		skills:    NewSkillGenerator(cfg.SkillsRoot),
-		events:    newEventBus(),
+		cfg:           cfg,
+		router:        newRouter(),
+		providers:     make(map[string]Provider),
+		handles:       newHandleManager(cfg.MaxOpenHandles),
+		locks:         newLockManager(cfg.LockTimeout),
+		streams:       newStreamManager(),
+		metrics:       newMetrics(),
+		skills:        NewSkillGenerator(cfg.SkillsRoot),
+		events:        newEventBus(),
 		breakers:      make(map[string]*circuitBreaker),
 		providerCache: make(map[string]providerCacheEntry),
 		bufPool: sync.Pool{

@@ -1655,11 +1655,11 @@ func TestWebDAVRange(t *testing.T) {
 
 func TestParseRangeUnit(t *testing.T) {
 	tests := []struct {
-		rng      string
-		total    int64
-		wantOk   bool
+		rng       string
+		total     int64
+		wantOk    bool
 		wantStart int64
-		wantEnd  int64
+		wantEnd   int64
 	}{
 		{"bytes=0-3", 10, true, 0, 3},
 		{"bytes=5-9", 10, true, 5, 9},

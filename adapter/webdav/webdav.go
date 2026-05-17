@@ -28,11 +28,11 @@ import (
 )
 
 type Server struct {
-	fs       *core.FileSystem
-	addr     string
-	opts     adapter.MountOptions
-	srv      *http.Server
-	ln       net.Listener
+	fs        *core.FileSystem
+	addr      string
+	opts      adapter.MountOptions
+	srv       *http.Server
+	ln        net.Listener
 	propCache *propCache
 }
 

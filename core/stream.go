@@ -68,15 +68,15 @@ func (sm *streamManager) size(path string) int {
 // streamBuffer is a single-producer / single-consumer (or competing
 // multi-consumer) byte ring with configurable backpressure.
 type streamBuffer struct {
-	mu          sync.Mutex
-	cond        *sync.Cond
-	buf         []byte
-	r, w        int
-	count       int
-	capacity    int
-	mode        BackpressureMode
+	mu           sync.Mutex
+	cond         *sync.Cond
+	buf          []byte
+	r, w         int
+	count        int
+	capacity     int
+	mode         BackpressureMode
 	maxChunkSize int
-	closed      bool
+	closed       bool
 }
 
 func newStreamBuffer(cfg *StreamConfig) *streamBuffer {

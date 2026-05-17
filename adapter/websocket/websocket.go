@@ -38,9 +38,9 @@ func (s *Server) Addr() string {
 	}
 	return s.addr
 }
-func (s *Server) FileSystem() *core.FileSystem      { return s.fs }
-func (s *Server) Options() adapter.MountOptions      { return s.opts }
-func (s *Server) ActiveConnections() int32           { return s.conns.Load() }
+func (s *Server) FileSystem() *core.FileSystem  { return s.fs }
+func (s *Server) Options() adapter.MountOptions { return s.opts }
+func (s *Server) ActiveConnections() int32      { return s.conns.Load() }
 
 func (s *Server) Mount(ctx context.Context) error {
 	mux := http.NewServeMux()

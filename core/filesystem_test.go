@@ -1382,8 +1382,7 @@ func TestCircuitBreaker(t *testing.T) {
 	if err := fs.RegisterProvider(fp); err != nil {
 		t.Fatal(err)
 	}
-	if err := fs.Mount("/api", MountEntry{Kind: KindAPI, Mode: 0o644, Ops: map[OpCode]*CapConfig{OpRead: {ProviderID: "p1", Action: "test"}}});
-	err != nil {
+	if err := fs.Mount("/api", MountEntry{Kind: KindAPI, Mode: 0o644, Ops: map[OpCode]*CapConfig{OpRead: {ProviderID: "p1", Action: "test"}}}); err != nil {
 		t.Fatal(err)
 	}
 
