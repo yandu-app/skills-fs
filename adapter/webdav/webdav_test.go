@@ -798,8 +798,11 @@ func TestWebDAVLockUnlockStub(t *testing.T) {
 		t.Fatal(err)
 	}
 	resp.Body.Close()
-	if resp.StatusCode != http.StatusNotImplemented {
-		t.Fatalf("expected 501 for LOCK, got %d", resp.StatusCode)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 for LOCK, got %d", resp.StatusCode)
+	}
+	if resp.Header.Get("Lock-Token") == "" {
+		t.Fatal("expected Lock-Token header")
 	}
 
 	resp, err = http.DefaultClient.Do(mustNewRequest(t, "UNLOCK", baseURL+"/x", nil))
@@ -807,8 +810,8 @@ func TestWebDAVLockUnlockStub(t *testing.T) {
 		t.Fatal(err)
 	}
 	resp.Body.Close()
-	if resp.StatusCode != http.StatusNotImplemented {
-		t.Fatalf("expected 501 for UNLOCK, got %d", resp.StatusCode)
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("expected 204 for UNLOCK, got %d", resp.StatusCode)
 	}
 }
 
