@@ -264,6 +264,35 @@ func TestWebSocketHealthz(t *testing.T) {
 	}
 }
 
+func TestWebSocketConnectionCounter(t *testing.T) {
+	fs := core.NewFS(core.GlobalConfig{})
+	if err := fs.Mount("/blob", core.MountEntry{Kind: core.KindBlob, Mode: 0o666, BlobData: []byte("hi")}); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := New(fs, "127.0.0.1:0", adapter.MountOptions{})
+	if err := srv.Mount(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Unmount(context.Background())
+
+	if srv.ActiveConnections() != 0 {
+		t.Fatalf("expected 0 connections, got %d", srv.ActiveConnections())
+	}
+
+	origin := "http://" + srv.ln.Addr().String()
+	url := "ws://" + srv.ln.Addr().String() + "/"
+	ws, err := websocket.Dial(url, "", origin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.Close()
+
+	if srv.ActiveConnections() != 1 {
+		t.Fatalf("expected 1 connection, got %d", srv.ActiveConnections())
+	}
+}
+
 func TestWebSocketOriginAllowed(t *testing.T) {
 	fs := core.NewFS(core.GlobalConfig{})
 	opts := adapter.MountOptions{AllowedOrigins: []string{"http://trusted.example.com"}}
