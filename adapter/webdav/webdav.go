@@ -184,6 +184,10 @@ func (s *Server) handleGet(w http.ResponseWriter, r *http.Request, path string, 
 		s.writeError(w, err)
 		return
 	}
+	if s.opts.MaxResponseSize > 0 && int64(len(data)) > s.opts.MaxResponseSize {
+		http.Error(w, "response too large", http.StatusInternalServerError)
+		return
+	}
 	stat, err := s.fs.Stat(path, caller)
 	if err == nil {
 		w.Header().Set("Content-Type", contentTypeFromKind(stat.Kind))
@@ -208,8 +212,11 @@ func (s *Server) handlePut(w http.ResponseWriter, r *http.Request, path string, 
 		http.Error(w, "read-only filesystem", http.StatusForbidden)
 		return
 	}
-	// Limit body size to a reasonable default.
-	r.Body = http.MaxBytesReader(w, r.Body, 64*1024*1024)
+	limit := int64(64 * 1024 * 1024)
+	if s.opts.MaxRequestSize > 0 {
+		limit = s.opts.MaxRequestSize
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
 	data, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
