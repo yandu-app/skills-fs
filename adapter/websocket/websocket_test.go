@@ -690,3 +690,73 @@ func TestErrorCode(t *testing.T) {
 		})
 	}
 }
+
+func TestProcessOpBranches(t *testing.T) {
+	fs := core.NewFS(core.GlobalConfig{})
+	if err := fs.Mount("/blob", core.MountEntry{Kind: core.KindBlob, Mode: 0o644, BlobData: []byte("ok")}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Test read-only write error.
+	roSrv := New(fs, "127.0.0.1:0", adapter.MountOptions{ReadOnly: true})
+	reply, _ := roSrv.processOp(nil, nil, WsMsg{Op: "write", Path: "/blob", Data: "x"}, false)
+	if reply.Error != "read-only filesystem" {
+		t.Fatalf("expected read-only error, got %q", reply.Error)
+	}
+
+	// Test write error path.
+	srv := New(fs, "127.0.0.1:0", adapter.MountOptions{})
+	reply, _ = srv.processOp(nil, nil, WsMsg{Op: "write", Path: "/missing", Data: "x"}, false)
+	if reply.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 on missing write, got %d", reply.Code)
+	}
+
+	// Test read error path.
+	reply, _ = srv.processOp(nil, nil, WsMsg{Op: "read", Path: "/missing"}, false)
+	if reply.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 on missing read, got %d", reply.Code)
+	}
+
+	// Test read-binary error path (batch=true).
+	reply, _ = srv.processOp(nil, nil, WsMsg{Op: "read-binary", Path: "/missing"}, true)
+	if reply.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 on missing read-binary, got %d", reply.Code)
+	}
+
+	// Test write-binary batch=true error.
+	reply, _ = srv.processOp(nil, nil, WsMsg{Op: "write-binary", Path: "/missing", Data: "x"}, true)
+	if reply.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 on missing write-binary batch, got %d", reply.Code)
+	}
+
+	// Test subscribe missing sub_id.
+	reply, _ = srv.processOp(nil, nil, WsMsg{Op: "subscribe"}, false)
+	if reply.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 on missing sub_id, got %d", reply.Code)
+	}
+
+	// Test unsubscribe missing sub_id.
+	reply, _ = srv.processOp(nil, nil, WsMsg{Op: "unsubscribe"}, false)
+	if reply.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 on missing sub_id unsubscribe, got %d", reply.Code)
+	}
+
+	// Test unsubscribe non-existent sub_id.
+	subs := make(map[string]func())
+	reply, _ = srv.processOp(nil, subs, WsMsg{Op: "unsubscribe", SubID: "nope"}, false)
+	if reply.Error != "" {
+		t.Fatalf("expected no error on unsubscribe no-op, got %q", reply.Error)
+	}
+
+	// Test unknown op.
+	reply, _ = srv.processOp(nil, nil, WsMsg{Op: "dance"}, false)
+	if reply.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 on unknown op, got %d", reply.Code)
+	}
+
+	// Test pong (no reply).
+	reply, _ = srv.processOp(nil, nil, WsMsg{Op: "pong"}, false)
+	if reply.Op != "pong" {
+		t.Fatalf("expected pong op pass-through, got %q", reply.Op)
+	}
+}
