@@ -166,6 +166,37 @@ func (s *Server) handleWS(conn *websocket.Conn) {
 				reply.Error = err.Error()
 				reply.Code = errorCode(err)
 			}
+		case "read-binary":
+			data, err := s.fs.Read(context.Background(), msg.Path, core.CallerIdentity{})
+			if err != nil {
+				reply.Error = err.Error()
+				reply.Code = errorCode(err)
+			} else {
+				// Send JSON ack, then binary payload.
+				if err := websocket.JSON.Send(conn, reply); err != nil {
+					return
+				}
+				conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+				if err := websocket.Message.Send(conn, data); err != nil {
+					return
+				}
+				continue // skip default JSON reply
+			}
+		case "write-binary":
+			if s.opts.ReadOnly {
+				reply.Error = "read-only filesystem"
+				reply.Code = http.StatusForbidden
+				break
+			}
+			conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+			var payload []byte
+			if err := websocket.Message.Receive(conn, &payload); err != nil {
+				return
+			}
+			if err := s.fs.Write(context.Background(), msg.Path, payload, core.CallerIdentity{}); err != nil {
+				reply.Error = err.Error()
+				reply.Code = errorCode(err)
+			}
 		case "subscribe":
 			if unsub != nil {
 				unsub()
