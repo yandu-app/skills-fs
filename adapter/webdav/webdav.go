@@ -118,6 +118,7 @@ func (s *Server) Options() adapter.MountOptions {
 func (s *Server) Mount(ctx context.Context) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", s.handleHealthz)
+	mux.HandleFunc("/metrics", s.handleMetrics)
 	if s.opts.Debug {
 		mux.HandleFunc("/debug/pprof/", pprof.Index)
 	}
@@ -341,6 +342,12 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(status)
+}
+
+func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	w.Write(s.fs.Prometheus())
 }
 
 func (s *Server) handleOptions(w http.ResponseWriter, r *http.Request) {
