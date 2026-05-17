@@ -151,3 +151,50 @@ func TestBuildFSDefaultProviderMissing(t *testing.T) {
 		t.Fatal("expected error because provider 'remote' is not registered")
 	}
 }
+
+func TestReloadConfig(t *testing.T) {
+	cfg := &Config{
+		Mounts: []MountConfig{
+			{Path: "/keep", Kind: "blob", Mode: "0644", Data: "keep"},
+			{Path: "/remove", Kind: "blob", Mode: "0644", Data: "remove"},
+		},
+	}
+	fs, err := cfg.BuildFS()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Reload with a modified config.
+	cfg.Mounts = []MountConfig{
+		{Path: "/keep", Kind: "blob", Mode: "0644", Data: "keep"},
+		{Path: "/keep", Kind: "blob", Mode: "0644", Data: "changed"},
+		{Path: "/add", Kind: "blob", Mode: "0644", Data: "add"},
+	}
+	if err := cfg.Reload(fs); err != nil {
+		t.Fatal(err)
+	}
+
+	// /remove should be gone.
+	_, err = fs.Read(nil, "/remove", core.CallerIdentity{})
+	if err == nil {
+		t.Fatal("expected /remove to be unmounted")
+	}
+
+	// /keep should have new data.
+	data, err := fs.Read(nil, "/keep", core.CallerIdentity{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "changed" {
+		t.Fatalf("expected 'changed', got %q", data)
+	}
+
+	// /add should exist.
+	data, err = fs.Read(nil, "/add", core.CallerIdentity{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "add" {
+		t.Fatalf("expected 'add', got %q", data)
+	}
+}
