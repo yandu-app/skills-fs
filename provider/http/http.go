@@ -15,10 +15,10 @@ import (
 
 // Provider forwards Invoke calls to an HTTP endpoint as JSON POST requests.
 type Provider struct {
-	id            string
-	baseURL       string
-	client        *http.Client
-	retryCount    int
+	id             string
+	baseURL        string
+	client         *http.Client
+	retryCount     int
 	retryBaseDelay time.Duration
 }
 

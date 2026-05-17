@@ -7,11 +7,11 @@ import (
 	"testing"
 	"time"
 
-	"golang.org/x/net/websocket"
 	"github.com/skills-fs/skills-fs/adapter"
 	"github.com/skills-fs/skills-fs/adapter/webdav"
 	wsadapter "github.com/skills-fs/skills-fs/adapter/websocket"
 	"github.com/skills-fs/skills-fs/core"
+	"golang.org/x/net/websocket"
 )
 
 func TestWebDAVAndWebSocketIntegration(t *testing.T) {

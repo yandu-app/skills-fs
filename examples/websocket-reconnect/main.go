@@ -12,10 +12,10 @@ import (
 	"sync"
 	"time"
 
-	"golang.org/x/net/websocket"
 	"github.com/skills-fs/skills-fs/adapter"
 	wsadapter "github.com/skills-fs/skills-fs/adapter/websocket"
 	"github.com/skills-fs/skills-fs/core"
+	"golang.org/x/net/websocket"
 )
 
 func main() {
@@ -39,10 +39,10 @@ func main() {
 	defer cancel()
 
 	client := &reconnectClient{
-		addr:      addr,
-		subID:     "demo-sub",
-		prefix:    "/counter",
-		maxDelay:  30 * time.Second,
+		addr:     addr,
+		subID:    "demo-sub",
+		prefix:   "/counter",
+		maxDelay: 30 * time.Second,
 	}
 	go client.run(ctx)
 

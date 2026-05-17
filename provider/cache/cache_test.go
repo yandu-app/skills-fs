@@ -10,10 +10,10 @@ import (
 )
 
 type mockProvider struct {
-	id      string
-	calls   int
-	result  []byte
-	err     error
+	id     string
+	calls  int
+	result []byte
+	err    error
 }
 
 func (m *mockProvider) ID() string { return m.id }

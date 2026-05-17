@@ -36,7 +36,7 @@ type GlobalConfig struct {
 	SkillsRoot        string
 	LockTimeout       time.Duration // advisory lock acquisition timeout
 	Breaker           CircuitBreakerConfig
-	AuditFunc         AuditFunc     // optional; nil disables audit logging
+	AuditFunc         AuditFunc // optional; nil disables audit logging
 }
 
 // AuditFunc receives an entry for every audited filesystem operation.
