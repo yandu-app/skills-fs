@@ -1670,3 +1670,94 @@ func TestNamespaceIsolationOpen(t *testing.T) {
 	}
 	h.Close(context.Background())
 }
+
+type countingProvider struct {
+	id        string
+	callCount int
+}
+
+func (p *countingProvider) ID() string { return p.id }
+func (p *countingProvider) Invoke(_ context.Context, action string, params map[string]interface{}) (*ProviderResult, error) {
+	p.callCount++
+	return &ProviderResult{Data: []byte(fmt.Sprintf("call-%d", p.callCount))}, nil
+}
+
+func TestProviderCacheHit(t *testing.T) {
+	p := &countingProvider{id: "cached"}
+	fs := NewFS(GlobalConfig{})
+	if err := fs.RegisterProvider(p); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Mount("/api", MountEntry{
+		Kind: KindAPI,
+		Mode: 0o644,
+		Ops: map[OpCode]*CapConfig{
+			OpRead: {ProviderID: "cached", Action: "test", CacheTTL: 100 * time.Millisecond},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// First call hits the provider.
+	data, err := fs.Read(context.Background(), "/api", CallerIdentity{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "call-1" {
+		t.Fatalf("expected call-1, got %q", data)
+	}
+
+	// Second call should be cached.
+	data, err = fs.Read(context.Background(), "/api", CallerIdentity{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "call-1" {
+		t.Fatalf("expected cached call-1, got %q", data)
+	}
+	if p.callCount != 1 {
+		t.Fatalf("expected 1 provider call, got %d", p.callCount)
+	}
+
+	// Wait for TTL expiration.
+	time.Sleep(150 * time.Millisecond)
+
+	// Third call should hit the provider again.
+	data, err = fs.Read(context.Background(), "/api", CallerIdentity{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "call-2" {
+		t.Fatalf("expected call-2 after expiry, got %q", data)
+	}
+	if p.callCount != 2 {
+		t.Fatalf("expected 2 provider calls, got %d", p.callCount)
+	}
+}
+
+func TestProviderCacheDisabled(t *testing.T) {
+	p := &countingProvider{id: "nocache"}
+	fs := NewFS(GlobalConfig{})
+	if err := fs.RegisterProvider(p); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Mount("/api", MountEntry{
+		Kind: KindAPI,
+		Mode: 0o644,
+		Ops: map[OpCode]*CapConfig{
+			OpRead: {ProviderID: "nocache", Action: "test"}, // no CacheTTL
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	for i := 0; i < 3; i++ {
+		_, err := fs.Read(context.Background(), "/api", CallerIdentity{})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if p.callCount != 3 {
+		t.Fatalf("expected 3 provider calls without cache, got %d", p.callCount)
+	}
+}

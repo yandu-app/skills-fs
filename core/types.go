@@ -127,6 +127,7 @@ type CapConfig struct {
 	ParamsFn   func(pathParams map[string]string, payload []byte, ctx OpContext) (map[string]interface{}, error)
 	Async      bool          // when true, provider runs in background and empty result is returned immediately
 	Timeout    time.Duration // per-invocation timeout; zero = inherit from caller context
+	CacheTTL   time.Duration // provider result cache TTL; zero = disabled
 }
 
 type OpContext struct {
