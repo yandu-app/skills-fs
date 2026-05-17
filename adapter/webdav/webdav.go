@@ -3,8 +3,10 @@ package webdav
 import (
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -188,6 +190,14 @@ func (s *Server) handleGet(w http.ResponseWriter, r *http.Request, path string, 
 		http.Error(w, "response too large", http.StatusInternalServerError)
 		return
 	}
+	tag := etag(data)
+	w.Header().Set("ETag", tag)
+	if ifNoneMatch := r.Header.Get("If-None-Match"); ifNoneMatch != "" {
+		if matchETag(ifNoneMatch, tag) {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+	}
 	stat, err := s.fs.Stat(path, caller)
 	if err == nil {
 		w.Header().Set("Content-Type", contentTypeFromKind(stat.Kind))
@@ -202,6 +212,12 @@ func (s *Server) handleHead(w http.ResponseWriter, r *http.Request, path string,
 		s.writeError(w, err)
 		return
 	}
+	if stat.Kind == core.KindBlob || stat.Kind == core.KindLink {
+		data, err := s.fs.Read(r.Context(), path, caller)
+		if err == nil {
+			w.Header().Set("ETag", etag(data))
+		}
+	}
 	w.Header().Set("Content-Type", contentTypeFromKind(stat.Kind))
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", stat.Size))
 	w.WriteHeader(http.StatusOK)
@@ -211,6 +227,18 @@ func (s *Server) handlePut(w http.ResponseWriter, r *http.Request, path string, 
 	if s.opts.ReadOnly {
 		http.Error(w, "read-only filesystem", http.StatusForbidden)
 		return
+	}
+	if ifMatch := r.Header.Get("If-Match"); ifMatch != "" {
+		cur, err := s.fs.Read(r.Context(), path, caller)
+		if err != nil {
+			w.Header().Set("ETag", "")
+			http.Error(w, "precondition failed", http.StatusPreconditionFailed)
+			return
+		}
+		if !matchETag(ifMatch, etag(cur)) {
+			http.Error(w, "precondition failed", http.StatusPreconditionFailed)
+			return
+		}
 	}
 	limit := int64(64 * 1024 * 1024)
 	if s.opts.MaxRequestSize > 0 {
@@ -382,7 +410,7 @@ func (s *Server) handlePropfind(w http.ResponseWriter, r *http.Request, p string
 		depth = "infinity"
 	}
 
-	entries, err := s.buildPropfindEntries(p, depth, caller)
+	entries, err := s.buildPropfindEntries(r.Context(), p, depth, caller)
 	if err != nil {
 		s.writeError(w, err)
 		return
@@ -413,14 +441,15 @@ func (s *Server) handleProppatch(w http.ResponseWriter, r *http.Request, p strin
 	xml.NewEncoder(w).Encode(ms)
 }
 
-func (s *Server) buildPropfindEntries(p string, depth string, caller core.CallerIdentity) ([]response, error) {
+func (s *Server) buildPropfindEntries(ctx context.Context, p string, depth string, caller core.CallerIdentity) ([]response, error) {
 	stat, err := s.fs.Stat(p, caller)
 	if err != nil {
 		return nil, err
 	}
+	data, _ := s.fs.Read(ctx, p, caller)
 
 	var entries []response
-	entries = append(entries, s.propfindResponse(p, stat))
+	entries = append(entries, s.propfindResponse(p, stat, data))
 
 	if depth != "0" && stat.Kind == core.KindDir {
 		children, err := s.fs.Readdir(p, caller)
@@ -436,31 +465,33 @@ func (s *Server) buildPropfindEntries(p string, depth string, caller core.Caller
 			if err != nil {
 				continue
 			}
-			entries = append(entries, s.propfindResponse(childPath, childStat))
+			childData, _ := s.fs.Read(ctx, childPath, caller)
+			entries = append(entries, s.propfindResponse(childPath, childStat, childData))
 		}
 	}
 
 	return entries, nil
 }
 
-func (s *Server) propfindResponse(p string, stat core.Stat) response {
+func (s *Server) propfindResponse(p string, stat core.Stat, data []byte) response {
 	var rt *resourceType
 	if stat.Kind == core.KindDir {
 		rt = &resourceType{Collection: ""}
 	}
+	pr := prop{
+		DisplayName:      path.Base(p),
+		GetContentLength: stat.Size,
+		GetContentType:   contentTypeFromKind(stat.Kind),
+		ResourceType:     rt,
+		CreationDate:     "1970-01-01T00:00:00Z",
+		GetLastModified:  "Thu, 01 Jan 1970 00:00:00 GMT",
+	}
+	if len(data) > 0 {
+		pr.GetETag = etag(data)
+	}
 	return response{
-		Href: p,
-		Propstat: propstat{
-			Prop: prop{
-				DisplayName:      path.Base(p),
-				GetContentLength: stat.Size,
-				GetContentType:   contentTypeFromKind(stat.Kind),
-				ResourceType:     rt,
-				CreationDate:     "1970-01-01T00:00:00Z",
-				GetLastModified:  "Thu, 01 Jan 1970 00:00:00 GMT",
-			},
-			Status: "HTTP/1.1 200 OK",
-		},
+		Href:     p,
+		Propstat: propstat{Prop: pr, Status: "HTTP/1.1 200 OK"},
 	}
 }
 
@@ -488,6 +519,7 @@ type prop struct {
 	DisplayName      string        `xml:"D:displayname"`
 	GetContentLength int64         `xml:"D:getcontentlength"`
 	GetContentType   string        `xml:"D:getcontenttype"`
+	GetETag          string        `xml:"D:getetag,omitempty"`
 	ResourceType     *resourceType `xml:"D:resourcetype"`
 	CreationDate     string        `xml:"D:creationdate"`
 	GetLastModified  string        `xml:"D:getlastmodified"`
@@ -588,6 +620,15 @@ func (gz *gzipResponseWriter) Write(p []byte) (int, error) {
 
 func (gz *gzipResponseWriter) Close() error {
 	return gz.Writer.Close()
+}
+
+func etag(data []byte) string {
+	h := sha256.Sum256(data)
+	return fmt.Sprintf(`"%s"`, hex.EncodeToString(h[:8]))
+}
+
+func matchETag(reqETag, currentETag string) bool {
+	return reqETag == currentETag || reqETag == "*"
 }
 
 func contentTypeFromKind(kind core.NodeKind) string {

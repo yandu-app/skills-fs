@@ -1123,3 +1123,180 @@ func TestWebDAVGzip(t *testing.T) {
 		t.Fatalf("decompressed body mismatch: got %d bytes, want %d", len(decompressed), len(big))
 	}
 }
+
+func TestWebDAVETag(t *testing.T) {
+	fs := core.NewFS(core.GlobalConfig{})
+	if err := fs.Mount("/blob", core.MountEntry{Kind: core.KindBlob, Mode: 0o644, BlobData: []byte("etag-test")}); err != nil {
+		t.Fatal(err)
+	}
+
+	server := New(fs, "127.0.0.1:0", adapter.MountOptions{})
+	if err := server.Mount(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Unmount(context.Background())
+
+	baseURL := "http://" + server.ln.Addr().String()
+
+	// GET should return ETag.
+	resp, err := http.Get(baseURL + "/blob")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	etagHeader := resp.Header.Get("ETag")
+	if etagHeader == "" {
+		t.Fatal("expected ETag header")
+	}
+
+	// GET with matching If-None-Match should return 304.
+	req, _ := http.NewRequest(http.MethodGet, baseURL+"/blob", nil)
+	req.Header.Set("If-None-Match", etagHeader)
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotModified {
+		t.Fatalf("expected 304, got %d", resp.StatusCode)
+	}
+
+	// GET with non-matching If-None-Match should return 200.
+	req, _ = http.NewRequest(http.MethodGet, baseURL+"/blob", nil)
+	req.Header.Set("If-None-Match", `"bad-etag"`)
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	// HEAD should return ETag.
+	req, _ = http.NewRequest(http.MethodHead, baseURL+"/blob", nil)
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	if resp.Header.Get("ETag") != etagHeader {
+		t.Fatalf("HEAD ETag mismatch: got %q, want %q", resp.Header.Get("ETag"), etagHeader)
+	}
+}
+
+func TestWebDAVPutIfMatch(t *testing.T) {
+	fs := core.NewFS(core.GlobalConfig{})
+	if err := fs.Mount("/blob", core.MountEntry{Kind: core.KindBlob, Mode: 0o644, BlobData: []byte("original")}); err != nil {
+		t.Fatal(err)
+	}
+
+	server := New(fs, "127.0.0.1:0", adapter.MountOptions{})
+	if err := server.Mount(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Unmount(context.Background())
+
+	baseURL := "http://" + server.ln.Addr().String()
+
+	// Fetch current ETag.
+	resp, err := http.Get(baseURL + "/blob")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	curETag := resp.Header.Get("ETag")
+
+	// PUT with matching If-Match should succeed.
+	req, _ := http.NewRequest(http.MethodPut, baseURL+"/blob", strings.NewReader("updated"))
+	req.Header.Set("If-Match", curETag)
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", resp.StatusCode)
+	}
+
+	// Fetch new ETag after write.
+	resp, err = http.Get(baseURL + "/blob")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	newETag := resp.Header.Get("ETag")
+
+	// PUT with stale If-Match should return 412.
+	req, _ = http.NewRequest(http.MethodPut, baseURL+"/blob", strings.NewReader("stale"))
+	req.Header.Set("If-Match", curETag)
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusPreconditionFailed {
+		t.Fatalf("expected 412, got %d", resp.StatusCode)
+	}
+
+	// PUT with If-Match on non-existent resource should return 412.
+	req, _ = http.NewRequest(http.MethodPut, baseURL+"/newblob", strings.NewReader("data"))
+	req.Header.Set("If-Match", `"any"`)
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusPreconditionFailed {
+		t.Fatalf("expected 412 for missing resource, got %d", resp.StatusCode)
+	}
+
+	// Verify the stale write did not apply.
+	resp, err = http.Get(baseURL + "/blob")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if string(body) != "updated" {
+		t.Fatalf("blob was unexpectedly modified: %q", string(body))
+	}
+	if resp.Header.Get("ETag") != newETag {
+		t.Fatal("ETag changed after failed conditional write")
+	}
+}
+
+func TestWebDAVPropfindETag(t *testing.T) {
+	fs := core.NewFS(core.GlobalConfig{})
+	if err := fs.Mount("/blob", core.MountEntry{Kind: core.KindBlob, Mode: 0o644, BlobData: []byte("propfind-etag")}); err != nil {
+		t.Fatal(err)
+	}
+
+	server := New(fs, "127.0.0.1:0", adapter.MountOptions{})
+	if err := server.Mount(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Unmount(context.Background())
+
+	baseURL := "http://" + server.ln.Addr().String()
+	req := mustNewRequest(t, "PROPFIND", baseURL+"/blob", nil)
+	req.Header.Set("Depth", "0")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusMultiStatus {
+		t.Fatalf("expected 207, got %d", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(body), "getetag") {
+		t.Fatalf("PROPFIND response missing getetag property: %s", string(body))
+	}
+}
