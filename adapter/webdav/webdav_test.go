@@ -433,6 +433,153 @@ func TestWebDAVPropfindEmptyDir(t *testing.T) {
 	}
 }
 
+func TestWebDAVPropfindDepthInfinity(t *testing.T) {
+	fs := core.NewFS(core.GlobalConfig{})
+	if err := fs.Mount("/dir", core.MountEntry{Kind: core.KindDir, Mode: 0o755}); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Mount("/dir/a.txt", core.MountEntry{Kind: core.KindBlob, Mode: 0o644, BlobData: []byte("a")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Mount("/dir/sub", core.MountEntry{Kind: core.KindDir, Mode: 0o755}); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Mount("/dir/sub/nested.txt", core.MountEntry{Kind: core.KindBlob, Mode: 0o644, BlobData: []byte("nested")}); err != nil {
+		t.Fatal(err)
+	}
+
+	server := New(fs, "127.0.0.1:0", adapter.MountOptions{})
+	if err := server.Mount(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Unmount(context.Background())
+
+	baseURL := "http://" + server.ln.Addr().String()
+	req, _ := http.NewRequest("PROPFIND", baseURL+"/dir", nil)
+	req.Header.Set("Depth", "infinity")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusMultiStatus {
+		t.Fatalf("PROPFIND status = %d", resp.StatusCode)
+	}
+
+	var ms decodeMultistatus
+	if err := xml.NewDecoder(resp.Body).Decode(&ms); err != nil {
+		t.Fatalf("decode multistatus: %v", err)
+	}
+	if len(ms.Responses) != 4 {
+		t.Fatalf("expected 4 responses for Depth:infinity, got %d", len(ms.Responses))
+	}
+	hrefs := make(map[string]bool)
+	for _, r := range ms.Responses {
+		hrefs[r.Href] = true
+	}
+	for _, want := range []string{"/dir", "/dir/a.txt", "/dir/sub", "/dir/sub/nested.txt"} {
+		if !hrefs[want] {
+			t.Fatalf("missing href %s", want)
+		}
+	}
+}
+
+func TestWebDAVPropfindDepthInfinityLimited(t *testing.T) {
+	fs := core.NewFS(core.GlobalConfig{})
+	if err := fs.Mount("/dir", core.MountEntry{Kind: core.KindDir, Mode: 0o755}); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Mount("/dir/a.txt", core.MountEntry{Kind: core.KindBlob, Mode: 0o644, BlobData: []byte("a")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Mount("/dir/sub", core.MountEntry{Kind: core.KindDir, Mode: 0o755}); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Mount("/dir/sub/nested.txt", core.MountEntry{Kind: core.KindBlob, Mode: 0o644, BlobData: []byte("nested")}); err != nil {
+		t.Fatal(err)
+	}
+
+	server := New(fs, "127.0.0.1:0", adapter.MountOptions{MaxPropfindDepth: 1})
+	if err := server.Mount(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Unmount(context.Background())
+
+	baseURL := "http://" + server.ln.Addr().String()
+	req, _ := http.NewRequest("PROPFIND", baseURL+"/dir", nil)
+	req.Header.Set("Depth", "infinity")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusMultiStatus {
+		t.Fatalf("PROPFIND status = %d", resp.StatusCode)
+	}
+
+	var ms decodeMultistatus
+	if err := xml.NewDecoder(resp.Body).Decode(&ms); err != nil {
+		t.Fatalf("decode multistatus: %v", err)
+	}
+	if len(ms.Responses) != 3 {
+		t.Fatalf("expected 3 responses with MaxPropfindDepth=1, got %d", len(ms.Responses))
+	}
+	hrefs := make(map[string]bool)
+	for _, r := range ms.Responses {
+		hrefs[r.Href] = true
+	}
+	for _, want := range []string{"/dir", "/dir/a.txt", "/dir/sub"} {
+		if !hrefs[want] {
+			t.Fatalf("missing href %s", want)
+		}
+	}
+	if hrefs["/dir/sub/nested.txt"] {
+		t.Fatal("expected /dir/sub/nested.txt to be excluded by depth limit")
+	}
+}
+
+func TestWebDAVPropfindDepthInfinityUnlimited(t *testing.T) {
+	fs := core.NewFS(core.GlobalConfig{})
+	if err := fs.Mount("/dir", core.MountEntry{Kind: core.KindDir, Mode: 0o755}); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Mount("/dir/a.txt", core.MountEntry{Kind: core.KindBlob, Mode: 0o644, BlobData: []byte("a")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Mount("/dir/sub", core.MountEntry{Kind: core.KindDir, Mode: 0o755}); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Mount("/dir/sub/nested.txt", core.MountEntry{Kind: core.KindBlob, Mode: 0o644, BlobData: []byte("nested")}); err != nil {
+		t.Fatal(err)
+	}
+
+	server := New(fs, "127.0.0.1:0", adapter.MountOptions{MaxPropfindDepth: -1})
+	if err := server.Mount(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Unmount(context.Background())
+
+	baseURL := "http://" + server.ln.Addr().String()
+	req, _ := http.NewRequest("PROPFIND", baseURL+"/dir", nil)
+	req.Header.Set("Depth", "infinity")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusMultiStatus {
+		t.Fatalf("PROPFIND status = %d", resp.StatusCode)
+	}
+
+	var ms decodeMultistatus
+	if err := xml.NewDecoder(resp.Body).Decode(&ms); err != nil {
+		t.Fatalf("decode multistatus: %v", err)
+	}
+	if len(ms.Responses) != 4 {
+		t.Fatalf("expected 4 responses for unlimited depth, got %d", len(ms.Responses))
+	}
+}
+
 func TestWebDAVPutNotFound(t *testing.T) {
 	fs := core.NewFS(core.GlobalConfig{})
 	server := New(fs, "127.0.0.1:0", adapter.MountOptions{})
