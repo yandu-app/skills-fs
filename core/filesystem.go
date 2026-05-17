@@ -25,6 +25,25 @@ func isReservedPath(p string) bool {
 	return false
 }
 
+// audit returns a callback that should be deferred with the error result.
+// When AuditFunc is nil the returned callback is a no-op.
+func (fs *FileSystem) audit(op string, path string, caller CallerIdentity) func(error) {
+	if fs.cfg.AuditFunc == nil {
+		return func(error) {}
+	}
+	start := time.Now()
+	return func(err error) {
+		fs.cfg.AuditFunc(AuditEntry{
+			Timestamp: start,
+			Op:        op,
+			Path:      path,
+			Caller:    caller,
+			Err:       err,
+			Duration:  time.Since(start),
+		})
+	}
+}
+
 // normalizePath validates and canonicalizes a path. It rejects empty
 // segments, ".", "..", and paths that do not start with "/".
 func normalizePath(p string) (string, error) {
@@ -145,7 +164,9 @@ func (fs *FileSystem) RegisterNotifier(fn func(Event), prefix string) func() {
 	return func() { fs.events.unregister(id) }
 }
 
-func (fs *FileSystem) Mount(p string, entry MountEntry) error {
+func (fs *FileSystem) Mount(p string, entry MountEntry) (err error) {
+	done := fs.audit("mount", p, CallerIdentity{})
+	defer func() { done(err) }()
 	path, err := normalizePath(p)
 	if err != nil {
 		return err
@@ -205,7 +226,9 @@ func (fs *FileSystem) Mount(p string, entry MountEntry) error {
 	return nil
 }
 
-func (fs *FileSystem) Unmount(p string) error {
+func (fs *FileSystem) Unmount(p string) (err error) {
+	done := fs.audit("unmount", p, CallerIdentity{})
+	defer func() { done(err) }()
 	path, err := normalizePath(p)
 	if err != nil {
 		return err
@@ -234,8 +257,10 @@ func (fs *FileSystem) Remove(path string) error {
 
 // Rename moves a mount from oldPath to newPath, preserving its properties.
 // It returns an error if oldPath does not exist or newPath is already mounted.
-func (fs *FileSystem) Rename(oldPath, newPath string) error {
-	oldPath, err := normalizePath(oldPath)
+func (fs *FileSystem) Rename(oldPath, newPath string) (err error) {
+	done := fs.audit("rename", oldPath+"->"+newPath, CallerIdentity{})
+	defer func() { done(err) }()
+	oldPath, err = normalizePath(oldPath)
 	if err != nil {
 		return err
 	}
@@ -261,9 +286,10 @@ func (fs *FileSystem) Rename(oldPath, newPath string) error {
 	return nil
 }
 
-func (fs *FileSystem) Stat(path string, caller CallerIdentity) (Stat, error) {
+func (fs *FileSystem) Stat(path string, caller CallerIdentity) (st Stat, err error) {
+	done := fs.audit("stat", path, caller)
+	defer func() { done(err) }()
 	started := time.Now()
-	var err error
 	defer func() { fs.metrics.record(OpStat, started, err) }()
 	if path == "/sys" {
 		return Stat{Path: path, Kind: KindDir, Mode: 0o555, UID: fs.cfg.DefaultUID, GID: fs.cfg.DefaultGID}, nil
@@ -309,15 +335,16 @@ func (fs *FileSystem) Stat(path string, caller CallerIdentity) (Stat, error) {
 	return Stat{Path: path, Kind: m.Kind, Mode: m.Mode, UID: m.UID, GID: m.GID, Size: size}, nil
 }
 
-func (fs *FileSystem) Readdir(path string, caller CallerIdentity) ([]DirEntry, error) {
+func (fs *FileSystem) Readdir(path string, caller CallerIdentity) (entries []DirEntry, err error) {
+	done := fs.audit("readdir", path, caller)
+	defer func() { done(err) }()
 	started := time.Now()
-	var err error
 	defer func() { fs.metrics.record(OpReaddir, started, err) }()
 	if path == "/sys" {
 		return []DirEntry{{Name: "metrics", Kind: KindBlob, Mode: 0o444}}, nil
 	}
 	if path == "/skills" {
-		entries := make([]DirEntry, 0)
+		entries = make([]DirEntry, 0)
 		for _, skill := range fs.skills.List() {
 			entries = append(entries, DirEntry{Name: skill.Name, Kind: KindDir, Mode: 0o555})
 		}
@@ -346,7 +373,7 @@ func (fs *FileSystem) Readdir(path string, caller CallerIdentity) ([]DirEntry, e
 			}
 		}
 	}
-	entries, err := fs.router.list(path)
+	entries, err = fs.router.list(path)
 	if err != nil {
 		return nil, err
 	}
@@ -359,9 +386,10 @@ func (fs *FileSystem) Readdir(path string, caller CallerIdentity) ([]DirEntry, e
 	return entries, nil
 }
 
-func (fs *FileSystem) Read(ctx context.Context, path string, caller CallerIdentity) ([]byte, error) {
+func (fs *FileSystem) Read(ctx context.Context, path string, caller CallerIdentity) (data []byte, err error) {
+	done := fs.audit("read", path, caller)
+	defer func() { done(err) }()
 	started := time.Now()
-	var err error
 	defer func() { fs.metrics.record(OpRead, started, err) }()
 	if path == "/sys/metrics" {
 		return fs.metrics.Prometheus(), nil
@@ -435,9 +463,10 @@ func (fs *FileSystem) Read(ctx context.Context, path string, caller CallerIdenti
 	}
 }
 
-func (fs *FileSystem) Write(ctx context.Context, path string, payload []byte, caller CallerIdentity) error {
+func (fs *FileSystem) Write(ctx context.Context, path string, payload []byte, caller CallerIdentity) (err error) {
+	done := fs.audit("write", path, caller)
+	defer func() { done(err) }()
 	started := time.Now()
-	var err error
 	defer func() { fs.metrics.record(OpWrite, started, err) }()
 	fs.mu.RLock()
 	rm, err := fs.router.match(path)

@@ -1438,3 +1438,54 @@ func TestCircuitBreaker(t *testing.T) {
 		t.Fatalf("unexpected data: %q", data)
 	}
 }
+
+func TestAuditLogging(t *testing.T) {
+	var entries []AuditEntry
+	audit := func(e AuditEntry) {
+		entries = append(entries, e)
+	}
+
+	fs := NewFS(GlobalConfig{AuditFunc: audit, DefaultUID: 1, DefaultGID: 1})
+	caller := CallerIdentity{UID: 1, GID: 1}
+
+	if err := fs.Mount("/blob", MountEntry{Kind: KindBlob, Mode: 0o644, BlobData: []byte("hello")}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fs.Stat("/blob", caller); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fs.Read(context.Background(), "/blob", caller); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Write(context.Background(), "/blob", []byte("world"), caller); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Unmount("/blob"); err != nil {
+		t.Fatal(err)
+	}
+	// Error path: stat missing path.
+	if _, err := fs.Stat("/missing", caller); err == nil {
+		t.Fatal("expected error")
+	}
+
+	wantOps := []string{"mount", "stat", "read", "write", "unmount", "stat"}
+	if len(entries) != len(wantOps) {
+		t.Fatalf("expected %d audit entries, got %d", len(wantOps), len(entries))
+	}
+	for i, want := range wantOps {
+		if entries[i].Op != want {
+			t.Fatalf("entry %d: expected op %q, got %q", i, want, entries[i].Op)
+		}
+		if entries[i].Duration < 0 {
+			t.Fatalf("entry %d: negative duration", i)
+		}
+	}
+	// Verify the last stat recorded an error.
+	if entries[len(entries)-1].Err == nil {
+		t.Fatal("expected error in last audit entry")
+	}
+	// Verify caller is captured for stat/read/write.
+	if entries[1].Caller != caller {
+		t.Fatalf("expected caller %+v, got %+v", caller, entries[1].Caller)
+	}
+}
