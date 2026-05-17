@@ -750,13 +750,10 @@ func TestMaxBlobSizeBudget(t *testing.T) {
 	}
 }
 
-func TestUnknownKindStatIsEINVAL(t *testing.T) {
+func TestUnknownKindMountIsEINVAL(t *testing.T) {
 	fs := NewFS(GlobalConfig{})
-	if err := fs.Mount("/badkind", MountEntry{Kind: NodeKind("weird")}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := fs.Stat("/badkind", CallerIdentity{}); !IsCode(err, EINVAL) {
-		t.Fatalf("expected EINVAL, got %v", err)
+	if err := fs.Mount("/badkind", MountEntry{Kind: NodeKind("weird")}); !IsCode(err, EINVAL) {
+		t.Fatalf("expected EINVAL on mount, got %v", err)
 	}
 }
 
@@ -1275,5 +1272,56 @@ func TestShutdownClosesStreams(t *testing.T) {
 	}
 	if len(data) != 0 {
 		t.Fatalf("expected empty read after stream close, got %q", data)
+	}
+}
+
+func TestMountEntryValidation(t *testing.T) {
+	fs := NewFS(GlobalConfig{})
+
+	// Invalid kind should fail.
+	if err := fs.Mount("/bad", MountEntry{Kind: NodeKind("bogus"), Mode: 0o644}); err == nil {
+		t.Fatal("expected error for invalid kind")
+	}
+
+	// BlobData on non-blob should fail.
+	if err := fs.Mount("/bad", MountEntry{Kind: KindDir, Mode: 0o755, BlobData: []byte("x")}); err == nil {
+		t.Fatal("expected error for BlobData on dir")
+	}
+
+	// LinkPath on non-link should fail.
+	if err := fs.Mount("/bad", MountEntry{Kind: KindBlob, Mode: 0o644, LinkPath: "/x"}); err == nil {
+		t.Fatal("expected error for LinkPath on blob")
+	}
+
+	// Stream config on non-stream should fail.
+	if err := fs.Mount("/bad", MountEntry{Kind: KindBlob, Mode: 0o644, Stream: &StreamConfig{Capacity: 1}}); err == nil {
+		t.Fatal("expected error for Stream on blob")
+	}
+
+	// Enabled skill without Name should fail.
+	if err := fs.Mount("/bad", MountEntry{Kind: KindAPI, Mode: 0o644, Skill: &SkillConfig{Enabled: true}}); err == nil {
+		t.Fatal("expected error for enabled skill without name")
+	}
+
+	// Invalid visibility should fail.
+	if err := fs.Mount("/bad", MountEntry{Kind: KindBlob, Mode: 0o644, Visibility: "secret"}); err == nil {
+		t.Fatal("expected error for invalid visibility")
+	}
+
+	// Valid entries should succeed.
+	if err := fs.Mount("/blob", MountEntry{Kind: KindBlob, Mode: 0o644, BlobData: []byte("ok")}); err != nil {
+		t.Fatalf("unexpected blob mount error: %v", err)
+	}
+	if err := fs.Mount("/link", MountEntry{Kind: KindLink, Mode: 0o777, LinkPath: "/blob"}); err != nil {
+		t.Fatalf("unexpected link mount error: %v", err)
+	}
+	if err := fs.Mount("/stream", MountEntry{Kind: KindStream, Mode: 0o666, Stream: &StreamConfig{Capacity: 1}}); err != nil {
+		t.Fatalf("unexpected stream mount error: %v", err)
+	}
+	if err := fs.Mount("/api", MountEntry{Kind: KindAPI, Mode: 0o644}); err != nil {
+		t.Fatalf("unexpected api mount error: %v", err)
+	}
+	if err := fs.Mount("/dir", MountEntry{Kind: KindDir, Mode: 0o755}); err != nil {
+		t.Fatalf("unexpected dir mount error: %v", err)
 	}
 }
