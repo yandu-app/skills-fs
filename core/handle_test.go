@@ -188,3 +188,36 @@ func TestFlockInvalidAndClosed(t *testing.T) {
 		t.Fatalf("expected EBUSY, got %v", err)
 	}
 }
+
+func TestFlockNoneKind(t *testing.T) {
+	fs := NewFS(GlobalConfig{})
+	if err := fs.Mount("/blob", MountEntry{Kind: KindBlob, Mode: 0o666}); err != nil {
+		t.Fatal(err)
+	}
+	h, err := fs.Open("/blob", OpenRead|OpenWrite, CallerIdentity{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Close(context.Background())
+
+	// Funlock when lockKind is already LockNone returns nil.
+	if err := h.Funlock(); err != nil {
+		t.Fatalf("Funlock on unlocked handle should return nil, got %v", err)
+	}
+
+	// Flock with LockNone delegates to Funlock, also returning nil.
+	if err := h.Flock(context.Background(), LockNone, false); err != nil {
+		t.Fatalf("Flock LockNone on unlocked handle should return nil, got %v", err)
+	}
+
+	// Acquire a shared lock, then downgrade via LockNone.
+	if err := h.Flock(context.Background(), LockShared, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.Flock(context.Background(), LockNone, false); err != nil {
+		t.Fatalf("Flock LockNone should downgrade to nil, got %v", err)
+	}
+	if shared, excl := fs.locks.inspect("/blob"); shared != 0 || excl {
+		t.Fatalf("lock should be released after LockNone, shared=%d excl=%v", shared, excl)
+	}
+}
