@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"testing"
 
@@ -53,14 +54,14 @@ func TestBuildFS(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	data, err := fs.Read(nil, "/hello", core.CallerIdentity{})
+	data, err := fs.Read(context.TODO(), "/hello", core.CallerIdentity{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if string(data) != "world" {
 		t.Fatalf("unexpected data %q", data)
 	}
-	linkData, err := fs.Read(nil, "/link", core.CallerIdentity{})
+	linkData, err := fs.Read(context.TODO(), "/link", core.CallerIdentity{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +101,7 @@ func TestBuildFSWithProvider(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = fs.Read(nil, "/api", core.CallerIdentity{})
+	_, err = fs.Read(context.TODO(), "/api", core.CallerIdentity{})
 	if err == nil {
 		t.Fatal("expected error because backend is not reachable")
 	}
@@ -175,13 +176,13 @@ func TestReloadConfig(t *testing.T) {
 	}
 
 	// /remove should be gone.
-	_, err = fs.Read(nil, "/remove", core.CallerIdentity{})
+	_, err = fs.Read(context.TODO(), "/remove", core.CallerIdentity{})
 	if err == nil {
 		t.Fatal("expected /remove to be unmounted")
 	}
 
 	// /keep should have new data.
-	data, err := fs.Read(nil, "/keep", core.CallerIdentity{})
+	data, err := fs.Read(context.TODO(), "/keep", core.CallerIdentity{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,7 +191,7 @@ func TestReloadConfig(t *testing.T) {
 	}
 
 	// /add should exist.
-	data, err = fs.Read(nil, "/add", core.CallerIdentity{})
+	data, err = fs.Read(context.TODO(), "/add", core.CallerIdentity{})
 	if err != nil {
 		t.Fatal(err)
 	}

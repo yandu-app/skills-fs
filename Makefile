@@ -1,4 +1,4 @@
-.PHONY: test coverage coverage-all race bench build gen-docs
+.PHONY: test coverage coverage-all race bench build gen-docs lint
 
 GOCACHE ?= /tmp/skills-fs-gocache
 
@@ -38,3 +38,7 @@ gen-docs:
 		echo "generating docs/api/$$out.md ..."; \
 		go run github.com/princjef/gomarkdoc/cmd/gomarkdoc@latest -o "docs/api/$$out.md" "./$$pkg"; \
 	done
+
+lint:
+	go vet ./...
+	go run honnef.co/go/tools/cmd/staticcheck@latest ./...

@@ -802,7 +802,7 @@ func validateMountEntry(entry *MountEntry) error {
 		return fmt.Errorf("LinkPath set for non-link kind %q", entry.Kind)
 	}
 	if entry.Stream != nil && entry.Kind != KindStream {
-		return fmt.Errorf("Stream config set for non-stream kind %q", entry.Kind)
+		return fmt.Errorf("stream config set for non-stream kind %q", entry.Kind)
 	}
 	if entry.Skill != nil && entry.Skill.Enabled && entry.Skill.Name == "" {
 		return fmt.Errorf("enabled skill requires Name")
