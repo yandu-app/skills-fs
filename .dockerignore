@@ -1,0 +1,28 @@
+# Git
+.git
+.gitignore
+
+# Documentation
+docs/
+*.md
+
+# Build artifacts
+skills-fs
+webdav-server
+websocket-events
+websocket-reconnect
+basic
+
+# Test artifacts
+*.test
+coverage.out
+
+# CI
+.github/
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
