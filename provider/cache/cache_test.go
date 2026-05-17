@@ -13,6 +13,7 @@ type mockProvider struct {
 	id     string
 	calls  int
 	result []byte
+	meta   map[string]string
 	err    error
 }
 
@@ -23,7 +24,7 @@ func (m *mockProvider) Invoke(ctx context.Context, action string, params map[str
 	if m.err != nil {
 		return nil, m.err
 	}
-	return &core.ProviderResult{Data: m.result}, nil
+	return &core.ProviderResult{Data: m.result, Meta: m.meta}, nil
 }
 
 func TestCacheHit(t *testing.T) {
@@ -117,5 +118,45 @@ func TestCacheID(t *testing.T) {
 	p := New(inner, time.Second)
 	if p.ID() != "mock" {
 		t.Fatalf("expected id 'mock', got %q", p.ID())
+	}
+}
+
+func TestCacheMetaCopy(t *testing.T) {
+	inner := &mockProvider{
+		id:     "mock",
+		result: []byte("hello"),
+		meta:   map[string]string{"k": "v"},
+	}
+	p := New(inner, time.Minute)
+
+	res1, err := p.Invoke(context.Background(), "a", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res2, err := p.Invoke(context.Background(), "a", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Mutate the returned meta to ensure cache returns independent copies.
+	res1.Meta["k"] = "mutated"
+	if res2.Meta["k"] != "v" {
+		t.Fatalf("expected cached meta unchanged, got %q", res2.Meta["k"])
+	}
+}
+
+func TestCopyMap(t *testing.T) {
+	if got := copyMap(nil); got != nil {
+		t.Fatalf("copyMap(nil) = %v, want nil", got)
+	}
+	m := map[string]string{"a": "1", "b": "2"}
+	got := copyMap(m)
+	if len(got) != 2 || got["a"] != "1" || got["b"] != "2" {
+		t.Fatalf("copyMap(%v) = %v", m, got)
+	}
+	// Ensure independent copy.
+	got["a"] = "x"
+	if m["a"] != "1" {
+		t.Fatal("copyMap mutated source")
 	}
 }
