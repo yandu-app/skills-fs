@@ -52,7 +52,7 @@ func NewFS(cfg GlobalConfig) *FileSystem {
 		router:    newRouter(),
 		providers: make(map[string]Provider),
 		handles:   newHandleManager(cfg.MaxOpenHandles),
-		locks:     newLockManager(),
+		locks:     newLockManager(cfg.LockTimeout),
 		streams:   newStreamManager(),
 		metrics:   newMetrics(),
 		skills:    NewSkillGenerator(cfg.SkillsRoot),
