@@ -690,6 +690,11 @@ func (fs *FileSystem) providerFor(m *MountEntry, op OpCode, path string) (*CapCo
 }
 
 func invokeProvider(ctx context.Context, provider Provider, cap *CapConfig, op OpCode, path string, pathParams ParamSet, payload []byte, caller CallerIdentity) ([]byte, error) {
+	if cap.Timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, cap.Timeout)
+		defer cancel()
+	}
 	params := map[string]interface{}{}
 	pathParams.Each(func(k, v string) {
 		params[k] = v
