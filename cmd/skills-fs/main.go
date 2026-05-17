@@ -4,9 +4,11 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
+	"runtime"
 	"strings"
 	"syscall"
 
@@ -17,6 +19,12 @@ import (
 )
 
 const version = "0.1.0"
+
+// Build metadata — set via ldflags at build time.
+var (
+	gitCommit = "unknown"
+	buildTime = "unknown"
+)
 
 func main() {
 	if len(os.Args) < 2 {
@@ -32,7 +40,7 @@ func main() {
 	case "validate":
 		os.Exit(cmdValidate(os.Args[2:]))
 	case "version":
-		fmt.Println(version)
+		printVersion(os.Stdout)
 	default:
 		usage()
 		os.Exit(1)
@@ -46,6 +54,13 @@ func usage() {
 	fmt.Fprintf(os.Stderr, "  fuse     Mount FUSE filesystem (Linux only)\n")
 	fmt.Fprintf(os.Stderr, "  validate Validate configuration file\n")
 	fmt.Fprintf(os.Stderr, "  version  Print version\n")
+}
+
+func printVersion(w io.Writer) {
+	fmt.Fprintf(w, "skills-fs %s\n", version)
+	fmt.Fprintf(w, "  git:    %s\n", gitCommit)
+	fmt.Fprintf(w, "  built:  %s\n", buildTime)
+	fmt.Fprintf(w, "  go:     %s\n", runtime.Version())
 }
 
 func setupLogger(level string, logFile string) *slog.Logger {

@@ -1,6 +1,13 @@
-.PHONY: test coverage coverage-all race bench
+.PHONY: test coverage coverage-all race bench build
 
 GOCACHE ?= /tmp/skills-fs-gocache
+
+GIT_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
+BUILD_TIME := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+LDFLAGS := -X main.gitCommit=$(GIT_COMMIT) -X main.buildTime=$(BUILD_TIME)
+
+build:
+	go build -ldflags "$(LDFLAGS)" -o skills-fs ./cmd/skills-fs
 
 CORE_PKGS := $(shell go list ./... | grep -v '/adapter')
 
