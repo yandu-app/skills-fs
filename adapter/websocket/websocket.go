@@ -147,6 +147,25 @@ func (s *Server) handleWS(conn *websocket.Conn) {
 		}
 	}()
 
+	// Heartbeat: send application-level ping every 30s.
+	stopHeartbeat := make(chan struct{})
+	defer close(stopHeartbeat)
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+				if err := websocket.JSON.Send(conn, WsReply{Op: "ping"}); err != nil {
+					return
+				}
+			case <-stopHeartbeat:
+				return
+			}
+		}
+	}()
+
 	for {
 		conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 		var msg WsMsg
@@ -240,6 +259,10 @@ func (s *Server) handleWS(conn *websocket.Conn) {
 				unsub()
 				delete(subs, msg.SubID)
 			}
+		case "ping":
+			reply.Op = "pong"
+		case "pong":
+			continue // no reply needed
 		default:
 			reply.Error = "unknown op"
 			reply.Code = http.StatusBadRequest
