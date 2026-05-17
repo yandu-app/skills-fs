@@ -1790,3 +1790,130 @@ func TestWebDAVMoveOverwrite(t *testing.T) {
 		t.Fatalf("expected 404 for moved source, got %d", resp.StatusCode)
 	}
 }
+
+func TestWebDAVPropfindCacheInvalidationOnPut(t *testing.T) {
+	fs := core.NewFS(core.GlobalConfig{})
+	if err := fs.Mount("/blob", core.MountEntry{Kind: core.KindBlob, Mode: 0o666, BlobData: []byte("original")}); err != nil {
+		t.Fatal(err)
+	}
+
+	server := New(fs, "127.0.0.1:0", adapter.MountOptions{PropfindCacheTTL: time.Minute})
+	if err := server.Mount(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Unmount(context.Background())
+
+	baseURL := "http://" + server.ln.Addr().String()
+
+	// First PROPFIND populates cache.
+	req := mustNewRequest(t, "PROPFIND", baseURL+"/blob", nil)
+	req.Header.Set("Depth", "0")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body1, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusMultiStatus {
+		t.Fatalf("expected 207, got %d", resp.StatusCode)
+	}
+
+	// PUT new content should invalidate cache.
+	putReq, _ := http.NewRequest(http.MethodPut, baseURL+"/blob", strings.NewReader("updated"))
+	resp, err = http.DefaultClient.Do(putReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", resp.StatusCode)
+	}
+
+	// Second PROPFIND should reflect new content (cache invalidated).
+	req = mustNewRequest(t, "PROPFIND", baseURL+"/blob", nil)
+	req.Header.Set("Depth", "0")
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body2, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusMultiStatus {
+		t.Fatalf("expected 207, got %d", resp.StatusCode)
+	}
+
+	// ETag should have changed because content changed.
+	if string(body1) == string(body2) {
+		t.Fatal("expected PROPFIND body to change after PUT invalidated cache")
+	}
+}
+
+func TestWebDAVPropfindCacheTTLExpiration(t *testing.T) {
+	fs := core.NewFS(core.GlobalConfig{})
+	if err := fs.Mount("/blob", core.MountEntry{Kind: core.KindBlob, Mode: 0o666, BlobData: []byte("v1")}); err != nil {
+		t.Fatal(err)
+	}
+
+	server := New(fs, "127.0.0.1:0", adapter.MountOptions{PropfindCacheTTL: 50 * time.Millisecond})
+	if err := server.Mount(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Unmount(context.Background())
+
+	baseURL := "http://" + server.ln.Addr().String()
+
+	// First PROPFIND populates cache.
+	req := mustNewRequest(t, "PROPFIND", baseURL+"/blob", nil)
+	req.Header.Set("Depth", "0")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body1, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusMultiStatus {
+		t.Fatalf("expected 207, got %d", resp.StatusCode)
+	}
+
+	// Change content behind the cache's back (bypass WebDAV so no invalidation).
+	if err := fs.Write(context.Background(), "/blob", []byte("v2"), core.CallerIdentity{}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Wait for TTL to expire.
+	time.Sleep(100 * time.Millisecond)
+
+	// Second PROPFIND should see fresh content because cache expired.
+	req = mustNewRequest(t, "PROPFIND", baseURL+"/blob", nil)
+	req.Header.Set("Depth", "0")
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body2, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusMultiStatus {
+		t.Fatalf("expected 207, got %d", resp.StatusCode)
+	}
+
+	if string(body1) == string(body2) {
+		t.Fatal("expected PROPFIND body to change after cache TTL expired")
+	}
+}
+
+func TestWebDAVPropfindCacheDisabled(t *testing.T) {
+	fs := core.NewFS(core.GlobalConfig{})
+	if err := fs.Mount("/blob", core.MountEntry{Kind: core.KindBlob, Mode: 0o666, BlobData: []byte("data")}); err != nil {
+		t.Fatal(err)
+	}
+
+	server := New(fs, "127.0.0.1:0", adapter.MountOptions{}) // no PropfindCacheTTL
+	if err := server.Mount(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Unmount(context.Background())
+
+	if server.propCache != nil {
+		t.Fatal("expected propCache to be nil when TTL is zero")
+	}
+}

@@ -19,6 +19,7 @@ import (
 	"net/url"
 	"path"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/skills-fs/skills-fs/adapter"
@@ -27,15 +28,72 @@ import (
 )
 
 type Server struct {
-	fs   *core.FileSystem
-	addr string
-	opts adapter.MountOptions
-	srv  *http.Server
-	ln   net.Listener
+	fs       *core.FileSystem
+	addr     string
+	opts     adapter.MountOptions
+	srv      *http.Server
+	ln       net.Listener
+	propCache *propCache
+}
+
+type propCacheEntry struct {
+	stat    core.Stat
+	etag    string
+	expires time.Time
+}
+
+type propCache struct {
+	mu      sync.RWMutex
+	entries map[string]propCacheEntry
+	ttl     time.Duration
+}
+
+func newPropCache(ttl time.Duration) *propCache {
+	if ttl <= 0 {
+		return nil
+	}
+	return &propCache{entries: make(map[string]propCacheEntry), ttl: ttl}
+}
+
+func (c *propCache) get(path string) (core.Stat, string, bool) {
+	if c == nil {
+		return core.Stat{}, "", false
+	}
+	c.mu.RLock()
+	ent, ok := c.entries[path]
+	c.mu.RUnlock()
+	if !ok || time.Now().After(ent.expires) {
+		return core.Stat{}, "", false
+	}
+	return ent.stat, ent.etag, true
+}
+
+func (c *propCache) set(path string, stat core.Stat, etag string) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	c.entries[path] = propCacheEntry{stat: stat, etag: etag, expires: time.Now().Add(c.ttl)}
+	c.mu.Unlock()
+}
+
+func (c *propCache) invalidate(path string) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	delete(c.entries, path)
+	// Also invalidate any entries under this path (descendants).
+	for p := range c.entries {
+		if p == path || strings.HasPrefix(p, path+"/") {
+			delete(c.entries, p)
+		}
+	}
+	c.mu.Unlock()
 }
 
 func New(fs *core.FileSystem, addr string, opts adapter.MountOptions) *Server {
-	return &Server{fs: fs, addr: addr, opts: opts}
+	return &Server{fs: fs, addr: addr, opts: opts, propCache: newPropCache(opts.PropfindCacheTTL)}
 }
 
 func (s *Server) MountPoint() string {
@@ -271,6 +329,7 @@ func (s *Server) handlePut(w http.ResponseWriter, r *http.Request, path string, 
 		s.writeError(w, err)
 		return
 	}
+	s.propCache.invalidate(path)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -331,6 +390,7 @@ func (s *Server) handleMkcol(w http.ResponseWriter, r *http.Request, path string
 		s.writeError(w, err)
 		return
 	}
+	s.propCache.invalidate(path)
 	w.WriteHeader(http.StatusCreated)
 }
 
@@ -356,6 +416,8 @@ func (s *Server) handleCopy(w http.ResponseWriter, r *http.Request, src string, 
 		s.writeError(w, err)
 		return
 	}
+	s.propCache.invalidate(src)
+	s.propCache.invalidate(dst)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -385,6 +447,8 @@ func (s *Server) handleMove(w http.ResponseWriter, r *http.Request, src string, 
 		s.writeError(w, err)
 		return
 	}
+	s.propCache.invalidate(src)
+	s.propCache.invalidate(dst)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -452,6 +516,7 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request, path strin
 		s.writeError(w, err)
 		return
 	}
+	s.propCache.invalidate(path)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -487,6 +552,7 @@ func (s *Server) handleProppatch(w http.ResponseWriter, r *http.Request, p strin
 		},
 	}
 	ms := multistatus{XmlnsD: "DAV:", Responses: []response{resp}}
+	s.propCache.invalidate(p)
 	w.Header().Set("Content-Type", "text/xml; charset=utf-8")
 	w.WriteHeader(http.StatusMultiStatus)
 	xml.NewEncoder(w).Encode(ms)
@@ -557,14 +623,23 @@ func (s *Server) buildPropfindEntries(ctx context.Context, p string, depth strin
 }
 
 func (s *Server) propfindRecursive(ctx context.Context, p string, currentDepth, maxDepth int, caller core.CallerIdentity) ([]response, error) {
-	stat, err := s.fs.Stat(p, caller)
-	if err != nil {
-		return nil, err
+	stat, etagStr, hit := s.propCache.get(p)
+	if !hit {
+		var err error
+		stat, err = s.fs.Stat(p, caller)
+		if err != nil {
+			return nil, err
+		}
+		data, _ := s.fs.Read(ctx, p, caller)
+		etagStr = ""
+		if len(data) > 0 {
+			etagStr = etag(data)
+		}
+		s.propCache.set(p, stat, etagStr)
 	}
-	data, _ := s.fs.Read(ctx, p, caller)
 
 	var entries []response
-	entries = append(entries, s.propfindResponse(p, stat, data))
+	entries = append(entries, s.propfindResponseCached(p, stat, etagStr))
 
 	if maxDepth >= 0 && currentDepth >= maxDepth {
 		return entries, nil
@@ -592,6 +667,14 @@ func (s *Server) propfindRecursive(ctx context.Context, p string, currentDepth, 
 }
 
 func (s *Server) propfindResponse(p string, stat core.Stat, data []byte) response {
+	etagStr := ""
+	if len(data) > 0 {
+		etagStr = etag(data)
+	}
+	return s.propfindResponseCached(p, stat, etagStr)
+}
+
+func (s *Server) propfindResponseCached(p string, stat core.Stat, etagStr string) response {
 	var rt *resourceType
 	if stat.Kind == core.KindDir {
 		rt = &resourceType{Collection: ""}
@@ -606,8 +689,8 @@ func (s *Server) propfindResponse(p string, stat core.Stat, data []byte) respons
 		QuotaAvailableBytes: 1 << 62,
 		QuotaUsedBytes:      0,
 	}
-	if len(data) > 0 {
-		pr.GetETag = etag(data)
+	if etagStr != "" {
+		pr.GetETag = etagStr
 	}
 	return response{
 		Href:     p,

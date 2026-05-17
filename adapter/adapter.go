@@ -28,8 +28,9 @@ type MountOptions struct {
 	Debug           bool          // enable /debug/pprof endpoints
 	MaxRequestSize   int64         // max request body bytes (PUT); zero = unlimited
 	MaxResponseSize  int64         // max response body bytes (GET); zero = unlimited
-	MaxPropfindDepth int           // max depth for PROPFIND; zero = default (3), negative = unlimited
-	MaxBatchSize     int           // max ops in a WebSocket batch; zero = default (32)
+	MaxPropfindDepth  int           // max depth for PROPFIND; zero = default (3), negative = unlimited
+	MaxBatchSize      int           // max ops in a WebSocket batch; zero = default (32)
+	PropfindCacheTTL  time.Duration // TTL for PROPFIND property cache; zero = disabled
 }
 
 // ShutdownContext returns a context with timeout if the supplied context has
