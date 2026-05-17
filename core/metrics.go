@@ -24,8 +24,9 @@ var latencyBuckets = []time.Duration{
 }
 
 type Metrics struct {
-	mu  sync.RWMutex
-	ops map[OpCode]*opMetrics
+	mu       sync.RWMutex
+	ops      map[OpCode]*opMetrics
+	eventBus *eventBus
 }
 
 type opMetrics struct {
@@ -102,6 +103,12 @@ func (m *Metrics) Prometheus() []byte {
 			fmt.Fprintf(&b, "skills_fs_operation_latency_seconds_bucket{op=%q,le=%q} %d\n", op, bound.String(), cumulative)
 		}
 		fmt.Fprintf(&b, "skills_fs_operation_latency_seconds_bucket{op=%q,le=%q} %d\n", op, "+Inf", metric.count.Load())
+	}
+	if m.eventBus != nil {
+		b.WriteString("# TYPE skills_fs_events_emitted_total counter\n")
+		b.WriteString("# TYPE skills_fs_events_delivered_total counter\n")
+		fmt.Fprintf(&b, "skills_fs_events_emitted_total %d\n", m.eventBus.emitted.Load())
+		fmt.Fprintf(&b, "skills_fs_events_delivered_total %d\n", m.eventBus.delivered.Load())
 	}
 	return []byte(b.String())
 }

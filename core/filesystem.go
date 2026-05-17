@@ -65,7 +65,7 @@ type FileSystem struct {
 
 func NewFS(cfg GlobalConfig) *FileSystem {
 	cfg = cfg.withDefaults()
-	return &FileSystem{
+	fs := &FileSystem{
 		cfg:       cfg,
 		router:    newRouter(),
 		providers: make(map[string]Provider),
@@ -83,6 +83,8 @@ func NewFS(cfg GlobalConfig) *FileSystem {
 			},
 		},
 	}
+	fs.metrics.eventBus = fs.events
+	return fs
 }
 
 // CloseAllHandles forcibly closes every open handle, flushing buffered writes

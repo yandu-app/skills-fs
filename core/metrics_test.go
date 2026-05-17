@@ -40,3 +40,23 @@ func TestMetricsRecordsErrors(t *testing.T) {
 		t.Fatalf("expected 1 write error, got:\n%s", out)
 	}
 }
+
+func TestMetricsEventBus(t *testing.T) {
+	eb := newEventBus()
+	m := newMetrics()
+	m.eventBus = eb
+
+	eb.emit(Event{Path: "/a", Kind: EventWrite})
+	id := eb.register(func(e Event) {}, "")
+	eb.emit(Event{Path: "/b", Kind: EventCreate})
+	eb.emit(Event{Path: "/c", Kind: EventRemove})
+	eb.unregister(id)
+
+	out := string(m.Prometheus())
+	if !strings.Contains(out, "skills_fs_events_emitted_total 3") {
+		t.Fatalf("expected 3 emitted, got:\n%s", out)
+	}
+	if !strings.Contains(out, "skills_fs_events_delivered_total 2") {
+		t.Fatalf("expected 2 delivered (1 per emit with active subscriber), got:\n%s", out)
+	}
+}
