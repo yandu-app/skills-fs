@@ -1917,3 +1917,142 @@ func TestWebDAVPropfindCacheDisabled(t *testing.T) {
 		t.Fatal("expected propCache to be nil when TTL is zero")
 	}
 }
+
+func TestWebDAVCopyIfMatch(t *testing.T) {
+	fs := core.NewFS(core.GlobalConfig{})
+	if err := fs.Mount("/src", core.MountEntry{Kind: core.KindBlob, Mode: 0o644, BlobData: []byte("src-data")}); err != nil {
+		t.Fatal(err)
+	}
+
+	server := New(fs, "127.0.0.1:0", adapter.MountOptions{})
+	if err := server.Mount(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Unmount(context.Background())
+
+	baseURL := "http://" + server.ln.Addr().String()
+
+	// Fetch current ETag.
+	resp, err := http.Get(baseURL + "/src")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	curETag := resp.Header.Get("ETag")
+
+	// COPY with matching If-Match should succeed.
+	req, _ := http.NewRequest("COPY", baseURL+"/src", nil)
+	req.Header.Set("Destination", baseURL+"/dst")
+	req.Header.Set("If-Match", curETag)
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", resp.StatusCode)
+	}
+
+	// COPY with stale If-Match should fail with 412.
+	req, _ = http.NewRequest("COPY", baseURL+"/src", nil)
+	req.Header.Set("Destination", baseURL+"/dst2")
+	req.Header.Set("If-Match", `"stale-etag"`)
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusPreconditionFailed {
+		t.Fatalf("expected 412, got %d", resp.StatusCode)
+	}
+}
+
+func TestWebDAVMoveIfMatch(t *testing.T) {
+	fs := core.NewFS(core.GlobalConfig{})
+	if err := fs.Mount("/src", core.MountEntry{Kind: core.KindBlob, Mode: 0o644, BlobData: []byte("move-me")}); err != nil {
+		t.Fatal(err)
+	}
+
+	server := New(fs, "127.0.0.1:0", adapter.MountOptions{})
+	if err := server.Mount(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Unmount(context.Background())
+
+	baseURL := "http://" + server.ln.Addr().String()
+
+	// Fetch current ETag.
+	resp, err := http.Get(baseURL + "/src")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	curETag := resp.Header.Get("ETag")
+
+	// MOVE with matching If-Match should succeed.
+	req, _ := http.NewRequest("MOVE", baseURL+"/src", nil)
+	req.Header.Set("Destination", baseURL+"/dst")
+	req.Header.Set("If-Match", curETag)
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", resp.StatusCode)
+	}
+
+	// Source should be gone.
+	resp, err = http.Get(baseURL + "/src")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected 404 for moved source, got %d", resp.StatusCode)
+	}
+}
+
+func TestWebDAVCopyIfNoneMatch(t *testing.T) {
+	fs := core.NewFS(core.GlobalConfig{})
+	if err := fs.Mount("/src", core.MountEntry{Kind: core.KindBlob, Mode: 0o644, BlobData: []byte("src-data")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Mount("/dst", core.MountEntry{Kind: core.KindBlob, Mode: 0o644, BlobData: []byte("dst-data")}); err != nil {
+		t.Fatal(err)
+	}
+
+	server := New(fs, "127.0.0.1:0", adapter.MountOptions{})
+	if err := server.Mount(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Unmount(context.Background())
+
+	baseURL := "http://" + server.ln.Addr().String()
+
+	// COPY with If-None-Match: * should fail when destination exists.
+	req, _ := http.NewRequest("COPY", baseURL+"/src", nil)
+	req.Header.Set("Destination", baseURL+"/dst")
+	req.Header.Set("If-None-Match", "*")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusPreconditionFailed {
+		t.Fatalf("expected 412, got %d", resp.StatusCode)
+	}
+
+	// COPY with If-None-Match: * should succeed when destination does not exist.
+	req, _ = http.NewRequest("COPY", baseURL+"/src", nil)
+	req.Header.Set("Destination", baseURL+"/newdst")
+	req.Header.Set("If-None-Match", "*")
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", resp.StatusCode)
+	}
+}

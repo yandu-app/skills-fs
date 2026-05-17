@@ -404,6 +404,9 @@ func (s *Server) handleCopy(w http.ResponseWriter, r *http.Request, src string, 
 		http.Error(w, "bad destination", http.StatusBadRequest)
 		return
 	}
+	if !s.checkCopyMovePreconditions(w, r, src, dst, caller) {
+		return
+	}
 	if !s.allowOverwrite(r, dst, caller) {
 		http.Error(w, "precondition failed", http.StatusPreconditionFailed)
 		return
@@ -431,6 +434,9 @@ func (s *Server) handleMove(w http.ResponseWriter, r *http.Request, src string, 
 		http.Error(w, "bad destination", http.StatusBadRequest)
 		return
 	}
+	if !s.checkCopyMovePreconditions(w, r, src, dst, caller) {
+		return
+	}
 	if !s.allowOverwrite(r, dst, caller) {
 		http.Error(w, "precondition failed", http.StatusPreconditionFailed)
 		return
@@ -450,6 +456,40 @@ func (s *Server) handleMove(w http.ResponseWriter, r *http.Request, src string, 
 	s.propCache.invalidate(src)
 	s.propCache.invalidate(dst)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// checkCopyMovePreconditions verifies If-Match (source) and If-None-Match
+// (destination) headers for COPY and MOVE. It returns false when a
+// precondition fails and the response has already been written.
+func (s *Server) checkCopyMovePreconditions(w http.ResponseWriter, r *http.Request, src, dst string, caller core.CallerIdentity) bool {
+	// If-Match is evaluated against the source resource.
+	if ifMatch := r.Header.Get("If-Match"); ifMatch != "" {
+		cur, err := s.fs.Read(r.Context(), src, caller)
+		if err != nil {
+			http.Error(w, "precondition failed", http.StatusPreconditionFailed)
+			return false
+		}
+		if !matchETag(ifMatch, etag(cur)) {
+			http.Error(w, "precondition failed", http.StatusPreconditionFailed)
+			return false
+		}
+	}
+	// If-None-Match is evaluated against the destination resource.
+	if ifNoneMatch := r.Header.Get("If-None-Match"); ifNoneMatch != "" {
+		if ifNoneMatch == "*" {
+			if _, err := s.fs.Stat(dst, caller); err == nil {
+				http.Error(w, "precondition failed", http.StatusPreconditionFailed)
+				return false
+			}
+		} else {
+			cur, err := s.fs.Read(r.Context(), dst, caller)
+			if err == nil && matchETag(ifNoneMatch, etag(cur)) {
+				http.Error(w, "precondition failed", http.StatusPreconditionFailed)
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // allowOverwrite checks the Overwrite header (default "T").
