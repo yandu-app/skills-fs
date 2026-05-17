@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	"github.com/skills-fs/skills-fs/adapter"
+	"github.com/skills-fs/skills-fs/adapter/middleware"
 	"github.com/skills-fs/skills-fs/core"
 )
 
@@ -55,9 +57,12 @@ func (s *Server) Mount(ctx context.Context) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.handleWebDAV)
 
+	handler := middleware.RequestID(mux)
+	handler = middleware.AccessLog(slog.Default())(handler)
+
 	s.srv = &http.Server{
 		Addr:    s.addr,
-		Handler: mux,
+		Handler: handler,
 	}
 
 	ln, err := net.Listen("tcp", s.addr)
