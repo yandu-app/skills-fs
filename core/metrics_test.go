@@ -61,6 +61,21 @@ func TestMetricsEventBus(t *testing.T) {
 	}
 }
 
+func TestMetricsCacheCounters(t *testing.T) {
+	m := newMetrics()
+	m.recordCacheHit()
+	m.recordCacheHit()
+	m.recordCacheMiss()
+
+	out := string(m.Prometheus())
+	if !strings.Contains(out, "skills_fs_provider_cache_hits_total 2") {
+		t.Fatalf("expected 2 cache hits, got:\n%s", out)
+	}
+	if !strings.Contains(out, "skills_fs_provider_cache_misses_total 1") {
+		t.Fatalf("expected 1 cache miss, got:\n%s", out)
+	}
+}
+
 func TestMetricsExtendedGauges(t *testing.T) {
 	fs := NewFS(GlobalConfig{Breaker: CircuitBreakerConfig{Enabled: true}})
 	_ = fs.RegisterProvider(&fakeProvider{id: "p1"})

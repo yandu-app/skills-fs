@@ -775,8 +775,10 @@ func (fs *FileSystem) invokeProvider(ctx context.Context, provider Provider, cap
 		ent, ok := fs.providerCache[cacheKey]
 		fs.providerCacheMu.Unlock()
 		if ok && time.Now().Before(ent.expires) {
+			fs.metrics.recordCacheHit()
 			return ent.result.Data, nil
 		}
+		fs.metrics.recordCacheMiss()
 	}
 
 	result, err := provider.Invoke(ctx, cap.Action, params)
