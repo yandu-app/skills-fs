@@ -679,6 +679,32 @@ func TestRestoreClearsExisting(t *testing.T) {
 	}
 }
 
+func TestMaxMountsBudget(t *testing.T) {
+	fs := NewFS(GlobalConfig{MaxMounts: 2})
+	if err := fs.Mount("/a", MountEntry{Kind: KindBlob}); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Mount("/b", MountEntry{Kind: KindBlob}); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Mount("/c", MountEntry{Kind: KindBlob}); !IsCode(err, ENOSPC) {
+		t.Fatalf("expected ENOSPC, got %v", err)
+	}
+}
+
+func TestMaxBlobSizeBudget(t *testing.T) {
+	fs := NewFS(GlobalConfig{MaxBlobSize: 5})
+	if err := fs.Mount("/small", MountEntry{Kind: KindBlob, Mode: 0o666, BlobData: []byte("12345")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Mount("/big", MountEntry{Kind: KindBlob, Mode: 0o666, BlobData: []byte("123456")}); !IsCode(err, ENOSPC) {
+		t.Fatalf("expected ENOSPC on mount, got %v", err)
+	}
+	if err := fs.Write(context.Background(), "/small", []byte("123456"), CallerIdentity{}); !IsCode(err, ENOSPC) {
+		t.Fatalf("expected ENOSPC on write, got %v", err)
+	}
+}
+
 func TestUnknownKindStatIsEINVAL(t *testing.T) {
 	fs := NewFS(GlobalConfig{})
 	if err := fs.Mount("/badkind", MountEntry{Kind: NodeKind("weird")}); err != nil {

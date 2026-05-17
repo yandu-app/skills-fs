@@ -104,6 +104,12 @@ func (fs *FileSystem) Mount(p string, entry MountEntry) error {
 	}
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
+	if fs.cfg.MaxMounts > 0 && fs.router.count() >= fs.cfg.MaxMounts {
+		return posix(ENOSPC, OpStat, path, nil)
+	}
+	if entry.Kind == KindBlob && int64(len(entry.BlobData)) > fs.cfg.MaxBlobSize {
+		return posix(ENOSPC, OpStat, path, nil)
+	}
 	if len(fs.providers) == 0 && hasProviderOps(entry.Ops) {
 		return posix(EINVAL, OpStat, path, nil)
 	}
@@ -388,6 +394,9 @@ func (fs *FileSystem) Write(ctx context.Context, path string, payload []byte, ca
 		m = rm.mount
 		if !canAccess(caller, m.UID, m.GID, m.Mode, OpWrite) {
 			return posix(EACCES, OpWrite, path, nil)
+		}
+		if int64(len(payload)) > fs.cfg.MaxBlobSize {
+			return posix(ENOSPC, OpWrite, path, nil)
 		}
 		m.BlobData = append(m.BlobData[:0], payload...)
 		fs.events.emit(Event{Path: path, Kind: EventWrite})

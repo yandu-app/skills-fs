@@ -247,6 +247,25 @@ func (r *router) snapshot() []MountEntry {
 	return out
 }
 
+// count returns the number of mounted entries in the trie.
+func (r *router) count() int {
+	var n int
+	var walk func(*routeNode)
+	walk = func(node *routeNode) {
+		if node.mount != nil {
+			n++
+		}
+		for _, child := range node.static {
+			walk(child)
+		}
+		if node.param != nil {
+			walk(node.param)
+		}
+	}
+	walk(&r.root)
+	return n
+}
+
 func cleanParts(path string) ([]string, error) {
 	if path == "" || path[0] != '/' {
 		return nil, posix(EINVAL, OpStat, path, nil)
