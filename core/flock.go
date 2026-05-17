@@ -30,10 +30,13 @@ type lockManager struct {
 	deadlockTimeout time.Duration
 }
 
-func newLockManager() *lockManager {
+func newLockManager(timeout time.Duration) *lockManager {
+	if timeout == 0 {
+		timeout = defaultLockTimeout
+	}
 	return &lockManager{
 		states:          make(map[string]*lockState),
-		deadlockTimeout: defaultLockTimeout,
+		deadlockTimeout: timeout,
 	}
 }
 

@@ -34,6 +34,7 @@ type GlobalConfig struct {
 	DefaultUID        uint32
 	DefaultGID        uint32
 	SkillsRoot        string
+	LockTimeout       time.Duration // advisory lock acquisition timeout
 }
 
 func (c GlobalConfig) withDefaults() GlobalConfig {
@@ -48,6 +49,9 @@ func (c GlobalConfig) withDefaults() GlobalConfig {
 	}
 	if c.ZeroCopyThreshold == 0 {
 		c.ZeroCopyThreshold = 4096
+	}
+	if c.LockTimeout == 0 {
+		c.LockTimeout = 30 * time.Second
 	}
 	return c
 }
