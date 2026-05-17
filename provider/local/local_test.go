@@ -70,3 +70,30 @@ func TestLocalProviderContextCancellation(t *testing.T) {
 		t.Fatal("expected timeout error")
 	}
 }
+
+func TestLocalProviderEnv(t *testing.T) {
+	p := NewProvider()
+	res, err := p.Invoke(context.Background(), "sh", map[string]interface{}{
+		"args": []string{"-c", "echo $TEST_VAR"},
+		"env":  []string{"TEST_VAR=hello-env"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(res.Data), "hello-env") {
+		t.Fatalf("expected env var in output, got: %q", res.Data)
+	}
+}
+
+func TestLocalProviderDir(t *testing.T) {
+	p := NewProvider()
+	res, err := p.Invoke(context.Background(), "pwd", map[string]interface{}{
+		"dir": "/tmp",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(res.Data), "/tmp") {
+		t.Fatalf("expected /tmp in output, got: %q", res.Data)
+	}
+}
