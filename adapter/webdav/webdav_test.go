@@ -1300,3 +1300,106 @@ func TestWebDAVPropfindETag(t *testing.T) {
 		t.Fatalf("PROPFIND response missing getetag property: %s", string(body))
 	}
 }
+
+func TestWebDAVRange(t *testing.T) {
+	fs := core.NewFS(core.GlobalConfig{})
+	data := []byte("0123456789abcdef")
+	if err := fs.Mount("/blob", core.MountEntry{Kind: core.KindBlob, Mode: 0o644, BlobData: data}); err != nil {
+		t.Fatal(err)
+	}
+
+	server := New(fs, "127.0.0.1:0", adapter.MountOptions{})
+	if err := server.Mount(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Unmount(context.Background())
+
+	baseURL := "http://" + server.ln.Addr().String()
+
+	// Full range request.
+	req, _ := http.NewRequest(http.MethodGet, baseURL+"/blob", nil)
+	req.Header.Set("Range", "bytes=0-7")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusPartialContent {
+		t.Fatalf("expected 206, got %d", resp.StatusCode)
+	}
+	if string(body) != "01234567" {
+		t.Fatalf("expected 01234567, got %q", string(body))
+	}
+	if resp.Header.Get("Content-Range") != "bytes 0-7/16" {
+		t.Fatalf("unexpected Content-Range: %q", resp.Header.Get("Content-Range"))
+	}
+
+	// Open-ended range.
+	req, _ = http.NewRequest(http.MethodGet, baseURL+"/blob", nil)
+	req.Header.Set("Range", "bytes=8-")
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ = io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if string(body) != "89abcdef" {
+		t.Fatalf("expected 89abcdef, got %q", string(body))
+	}
+
+	// Suffix range.
+	req, _ = http.NewRequest(http.MethodGet, baseURL+"/blob", nil)
+	req.Header.Set("Range", "bytes=-4")
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ = io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if string(body) != "cdef" {
+		t.Fatalf("expected cdef, got %q", string(body))
+	}
+
+	// Out-of-range request.
+	req, _ = http.NewRequest(http.MethodGet, baseURL+"/blob", nil)
+	req.Header.Set("Range", "bytes=100-200")
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusRequestedRangeNotSatisfiable {
+		t.Fatalf("expected 416, got %d", resp.StatusCode)
+	}
+}
+
+func TestParseRangeUnit(t *testing.T) {
+	tests := []struct {
+		rng      string
+		total    int64
+		wantOk   bool
+		wantStart int64
+		wantEnd  int64
+	}{
+		{"bytes=0-3", 10, true, 0, 3},
+		{"bytes=5-9", 10, true, 5, 9},
+		{"bytes=5-", 10, true, 5, 9},
+		{"bytes=-3", 10, true, 7, 9},
+		{"bytes=-3", 2, true, 0, 1},
+		{"bytes=0-3", 3, true, 0, 2},
+		{"bytes=10-15", 10, false, 0, 0},
+		{"bytes=5-3", 10, false, 0, 0},
+		{"bytes=0-3", 0, false, 0, 0},
+		{"lines=0-3", 10, false, 0, 0},
+	}
+	for _, tc := range tests {
+		start, end, ok := parseRange(tc.rng, tc.total)
+		if ok != tc.wantOk {
+			t.Fatalf("parseRange(%q, %d) ok=%v, want %v", tc.rng, tc.total, ok, tc.wantOk)
+		}
+		if ok && (start != tc.wantStart || end != tc.wantEnd) {
+			t.Fatalf("parseRange(%q, %d) = %d-%d, want %d-%d", tc.rng, tc.total, start, end, tc.wantStart, tc.wantEnd)
+		}
+	}
+}
