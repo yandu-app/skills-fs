@@ -625,6 +625,58 @@ func TestRenameRejectsBadPath(t *testing.T) {
 	}
 }
 
+func TestSnapshotAndRestore(t *testing.T) {
+	fs := NewFS(GlobalConfig{})
+	if err := fs.Mount("/a", MountEntry{Kind: KindBlob, Mode: 0o644, BlobData: []byte("alpha")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Mount("/b", MountEntry{Kind: KindDir, Mode: 0o755}); err != nil {
+		t.Fatal(err)
+	}
+
+	snap := fs.Snapshot()
+	if len(snap) != 2 {
+		t.Fatalf("expected 2 entries, got %d", len(snap))
+	}
+
+	fs2 := NewFS(GlobalConfig{})
+	if err := fs2.Restore(snap); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := fs2.Read(context.Background(), "/a", CallerIdentity{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "alpha" {
+		t.Fatalf("unexpected data %q", data)
+	}
+
+	entries, err := fs2.Readdir("/b", CallerIdentity{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("expected empty dir, got %d entries", len(entries))
+	}
+}
+
+func TestRestoreClearsExisting(t *testing.T) {
+	fs := NewFS(GlobalConfig{})
+	if err := fs.Mount("/old", MountEntry{Kind: KindBlob}); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Restore([]MountEntry{{Path: "/new", Kind: KindBlob, Mode: 0o644}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fs.Stat("/old", CallerIdentity{}); !IsCode(err, ENOENT) {
+		t.Fatalf("expected ENOENT for /old, got %v", err)
+	}
+	if _, err := fs.Stat("/new", CallerIdentity{}); err != nil {
+		t.Fatalf("expected /new to exist, got %v", err)
+	}
+}
+
 func TestUnknownKindStatIsEINVAL(t *testing.T) {
 	fs := NewFS(GlobalConfig{})
 	if err := fs.Mount("/badkind", MountEntry{Kind: NodeKind("weird")}); err != nil {
