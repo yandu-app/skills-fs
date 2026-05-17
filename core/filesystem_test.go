@@ -1874,3 +1874,49 @@ func TestFilterDirEntriesByNamespace(t *testing.T) {
 		}
 	}
 }
+
+func TestProviderHealth(t *testing.T) {
+	fs := NewFS(GlobalConfig{})
+
+	// Provider without health check.
+	p1 := &fakeProvider{id: "p1"}
+	if err := fs.RegisterProvider(p1); err != nil {
+		t.Fatal(err)
+	}
+
+	// Provider with health check.
+	p2 := &healthyProvider{id: "p2"}
+	if err := fs.RegisterProvider(p2); err != nil {
+		t.Fatal(err)
+	}
+
+	// Provider with failing health check.
+	p3 := &healthyProvider{id: "p3", err: errors.New("boom")}
+	if err := fs.RegisterProvider(p3); err != nil {
+		t.Fatal(err)
+	}
+
+	h := fs.ProviderHealth(context.Background())
+	if h["p1"] != "unknown" {
+		t.Fatalf("expected p1 unknown, got %q", h["p1"])
+	}
+	if h["p2"] != "healthy" {
+		t.Fatalf("expected p2 healthy, got %q", h["p2"])
+	}
+	if h["p3"] != "unhealthy: boom" {
+		t.Fatalf("expected p3 unhealthy, got %q", h["p3"])
+	}
+}
+
+type healthyProvider struct {
+	id  string
+	err error
+}
+
+func (p *healthyProvider) ID() string { return p.id }
+func (p *healthyProvider) Invoke(ctx context.Context, action string, params map[string]interface{}) (*ProviderResult, error) {
+	return nil, nil
+}
+func (p *healthyProvider) HealthCheck(ctx context.Context) error {
+	return p.err
+}
