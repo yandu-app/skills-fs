@@ -2,6 +2,7 @@ package websocket
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -628,5 +629,34 @@ func TestWebSocketCompressionNegotiated(t *testing.T) {
 	}
 	if reply.Data != "compress-me" {
 		t.Fatalf("expected compress-me, got %q", reply.Data)
+	}
+}
+
+func TestWebSocketMetricsEndpoint(t *testing.T) {
+	fs := core.NewFS(core.GlobalConfig{})
+	server := New(fs, "127.0.0.1:0", adapter.MountOptions{})
+	if err := server.Mount(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Unmount(context.Background())
+
+	baseURL := "http://" + server.ln.Addr().String()
+	resp, err := http.Get(baseURL + "/metrics")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); !strings.Contains(ct, "text/plain") {
+		t.Fatalf("expected text/plain content type, got %q", ct)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "skills_fs_operation_latency_seconds") {
+		t.Fatalf("expected prometheus latency metric, got:\n%s", body)
 	}
 }

@@ -50,6 +50,11 @@ func (s *Server) Mount(ctx context.Context) error {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok\n"))
 	})
+	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		w.Write(s.fs.Prometheus())
+	})
 	mux.HandleFunc("/", s.handleWS)
 
 	handler := middleware.CORS(s.opts.CORSOrigins)(mux)
