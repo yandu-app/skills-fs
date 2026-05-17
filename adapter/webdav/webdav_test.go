@@ -924,3 +924,23 @@ func TestWebDAVTLS(t *testing.T) {
 		t.Fatalf("unexpected body: %s", body)
 	}
 }
+
+func TestWebDAVPathSanitization(t *testing.T) {
+	for _, tc := range []struct {
+		path string
+		want string
+	}{
+		{"/", "/"},
+		{"/foo", "/foo"},
+		{"", "/"},
+		{"/../etc/passwd", ""},
+		{"/foo/../bar", ""},
+		{"/foo/./bar", ""},
+		{"/foo//bar", ""},
+	} {
+		got := sanitizePath(tc.path)
+		if got != tc.want {
+			t.Fatalf("sanitizePath(%q) = %q, want %q", tc.path, got, tc.want)
+		}
+	}
+}

@@ -574,6 +574,57 @@ func TestFollowLinkLoop(t *testing.T) {
 	}
 }
 
+func TestNormalizePath(t *testing.T) {
+	tests := []struct {
+		path string
+		ok   bool
+	}{
+		{"/", true},
+		{"/foo", true},
+		{"/foo/bar", true},
+		{"foo", false},
+		{"", false},
+		{"/foo/", false},
+		{"/foo/../bar", false},
+		{"/foo/./bar", false},
+		{"/foo//bar", false},
+		{"/../foo", false},
+	}
+	for _, tc := range tests {
+		_, err := normalizePath(tc.path)
+		if tc.ok && err != nil {
+			t.Fatalf("path %q: expected ok, got %v", tc.path, err)
+		}
+		if !tc.ok && err == nil {
+			t.Fatalf("path %q: expected error, got nil", tc.path)
+		}
+	}
+}
+
+func TestMountRejectsBadPath(t *testing.T) {
+	fs := NewFS(GlobalConfig{})
+	if err := fs.Mount("/foo/../bar", MountEntry{Kind: KindBlob}); !IsCode(err, EINVAL) {
+		t.Fatalf("expected EINVAL, got %v", err)
+	}
+}
+
+func TestUnmountRejectsBadPath(t *testing.T) {
+	fs := NewFS(GlobalConfig{})
+	if err := fs.Unmount("/foo/../bar"); !IsCode(err, EINVAL) {
+		t.Fatalf("expected EINVAL, got %v", err)
+	}
+}
+
+func TestRenameRejectsBadPath(t *testing.T) {
+	fs := NewFS(GlobalConfig{})
+	if err := fs.Rename("/foo/../a", "/b"); !IsCode(err, EINVAL) {
+		t.Fatalf("expected EINVAL for old, got %v", err)
+	}
+	if err := fs.Rename("/a", "/foo/../b"); !IsCode(err, EINVAL) {
+		t.Fatalf("expected EINVAL for new, got %v", err)
+	}
+}
+
 func TestUnknownKindStatIsEINVAL(t *testing.T) {
 	fs := NewFS(GlobalConfig{})
 	if err := fs.Mount("/badkind", MountEntry{Kind: NodeKind("weird")}); err != nil {
