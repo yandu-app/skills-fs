@@ -42,6 +42,7 @@ type FileSystem struct {
 	metrics   *Metrics
 	skills    *SkillGenerator
 	events    *eventBus
+	bufPool   sync.Pool
 	mu        sync.RWMutex
 }
 
@@ -57,6 +58,12 @@ func NewFS(cfg GlobalConfig) *FileSystem {
 		metrics:   newMetrics(),
 		skills:    NewSkillGenerator(cfg.SkillsRoot),
 		events:    newEventBus(),
+		bufPool: sync.Pool{
+			New: func() interface{} {
+				b := make([]byte, streamReadChunk)
+				return &b
+			},
+		},
 	}
 }
 
@@ -352,12 +359,17 @@ func (fs *FileSystem) Read(ctx context.Context, path string, caller CallerIdenti
 		cfg := m.Stream
 		fs.mu.RUnlock()
 		b := fs.streams.getOrCreate(path, cfg)
-		buf := make([]byte, streamReadChunk)
+		bufPtr := fs.bufPool.Get().(*[]byte)
+		buf := *bufPtr
 		n, err := b.read(buf, false)
 		if err != nil {
+			fs.bufPool.Put(bufPtr)
 			return nil, err
 		}
-		return buf[:n], nil
+		result := make([]byte, n)
+		copy(result, buf[:n])
+		fs.bufPool.Put(bufPtr)
+		return result, nil
 	case KindDir:
 		fs.mu.RUnlock()
 		return nil, posix(EISDIR, OpRead, path, nil)
