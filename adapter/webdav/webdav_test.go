@@ -2363,3 +2363,50 @@ func TestWebDAVWriteErrorMapping(t *testing.T) {
 		t.Fatalf("expected 404 for ENOENT, got %d", resp.StatusCode)
 	}
 }
+
+func TestHandleUnlockDirect(t *testing.T) {
+	fs := core.NewFS(core.GlobalConfig{})
+	srv := New(fs, "127.0.0.1:0", adapter.MountOptions{})
+	w := httptest.NewRecorder()
+	srv.handleUnlock(w, nil, "/x", core.CallerIdentity{})
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", w.Code)
+	}
+}
+
+func TestHandleUnlockReadOnlyDirect(t *testing.T) {
+	fs := core.NewFS(core.GlobalConfig{})
+	srv := New(fs, "127.0.0.1:0", adapter.MountOptions{ReadOnly: true})
+	w := httptest.NewRecorder()
+	srv.handleUnlock(w, nil, "/x", core.CallerIdentity{})
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", w.Code)
+	}
+}
+
+func TestWriteErrorMapping(t *testing.T) {
+	fs := core.NewFS(core.GlobalConfig{})
+	srv := New(fs, "127.0.0.1:0", adapter.MountOptions{})
+
+	cases := []struct {
+		name string
+		err  error
+		want int
+	}{
+		{"ENOENT", &core.PosixError{Code: core.ENOENT}, http.StatusNotFound},
+		{"EACCES", &core.PosixError{Code: core.EACCES}, http.StatusForbidden},
+		{"EEXIST", &core.PosixError{Code: core.EEXIST}, http.StatusConflict},
+		{"EINVAL", &core.PosixError{Code: core.EINVAL}, http.StatusBadRequest},
+		{"EIO", &core.PosixError{Code: core.EIO}, http.StatusInternalServerError},
+		{"plain", io.EOF, http.StatusInternalServerError},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			srv.writeError(w, tc.err)
+			if w.Code != tc.want {
+				t.Fatalf("expected %d, got %d", tc.want, w.Code)
+			}
+		})
+	}
+}
