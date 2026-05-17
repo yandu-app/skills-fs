@@ -460,3 +460,46 @@ func TestWebSocketSubscribeMissingID(t *testing.T) {
 		t.Fatalf("expected missing sub_id error, got %q", reply.Error)
 	}
 }
+
+func TestWebSocketPingPong(t *testing.T) {
+	fs := core.NewFS(core.GlobalConfig{})
+	srv := New(fs, "127.0.0.1:0", adapter.MountOptions{})
+	if err := srv.Mount(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Unmount(context.Background())
+
+	origin := "http://" + srv.ln.Addr().String()
+	url := "ws://" + srv.ln.Addr().String() + "/"
+	ws, err := websocket.Dial(url, "", origin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.Close()
+
+	// Client-initiated ping.
+	if err := websocket.JSON.Send(ws, WsMsg{Op: "ping"}); err != nil {
+		t.Fatal(err)
+	}
+	var reply WsReply
+	if err := websocket.JSON.Receive(ws, &reply); err != nil {
+		t.Fatal(err)
+	}
+	if reply.Op != "pong" {
+		t.Fatalf("expected pong, got %q", reply.Op)
+	}
+
+	// Wait for server-initiated heartbeat ping.
+	ws.SetDeadline(time.Now().Add(35 * time.Second))
+	if err := websocket.JSON.Receive(ws, &reply); err != nil {
+		t.Fatalf("expected server ping, got err: %v", err)
+	}
+	if reply.Op != "ping" {
+		t.Fatalf("expected ping, got %q", reply.Op)
+	}
+
+	// Reply with pong.
+	if err := websocket.JSON.Send(ws, WsMsg{Op: "pong"}); err != nil {
+		t.Fatal(err)
+	}
+}
