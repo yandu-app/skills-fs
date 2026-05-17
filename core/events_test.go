@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"testing"
 	"time"
 )
@@ -24,7 +25,7 @@ func TestEventBusEmitAndReceive(t *testing.T) {
 		t.Fatal("timeout waiting for create event")
 	}
 
-	if err := fs.Write(nil, "/blob", []byte("x"), CallerIdentity{}); err != nil {
+	if err := fs.Write(context.TODO(), "/blob", []byte("x"), CallerIdentity{}); err != nil {
 		t.Fatal(err)
 	}
 	select {
