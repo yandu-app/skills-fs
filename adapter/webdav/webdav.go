@@ -141,7 +141,7 @@ func (s *Server) handleWebDAV(w http.ResponseWriter, r *http.Request) {
 	// Wrap writer with gzip for compressible methods when enabled.
 	if s.opts.EnableGzip && strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
 		switch r.Method {
-		case http.MethodGet, "PROPFIND":
+		case http.MethodGet, "PROPFIND", "SEARCH":
 			gzw := &gzipResponseWriter{ResponseWriter: w, Writer: gzip.NewWriter(w)}
 			gzw.Header().Set("Content-Encoding", "gzip")
 			gzw.Header().Del("Content-Length")
@@ -173,10 +173,12 @@ func (s *Server) handleWebDAV(w http.ResponseWriter, r *http.Request) {
 		s.handleLock(w, r, path, caller)
 	case "UNLOCK":
 		s.handleUnlock(w, r, path, caller)
+	case "SEARCH":
+		s.handleSearch(w, r, path, caller)
 	case http.MethodOptions:
 		s.handleOptions(w, r)
 	default:
-		w.Header().Set("Allow", "GET, HEAD, PUT, DELETE, MKCOL, COPY, MOVE, PROPFIND, PROPPATCH, OPTIONS, LOCK, UNLOCK")
+		w.Header().Set("Allow", "GET, HEAD, PUT, DELETE, MKCOL, COPY, MOVE, PROPFIND, PROPPATCH, OPTIONS, LOCK, UNLOCK, SEARCH")
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
 }
@@ -490,6 +492,49 @@ func (s *Server) handleProppatch(w http.ResponseWriter, r *http.Request, p strin
 	xml.NewEncoder(w).Encode(ms)
 }
 
+func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request, p string, caller core.CallerIdentity) {
+	var req searchRequest
+	if err := xml.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid search body", http.StatusBadRequest)
+		return
+	}
+	pattern := req.BasicSearch.Where.Like.Literal
+	// DASL LIKE uses % as wildcard; convert to Go match pattern.
+	matchPattern := strings.ReplaceAll(pattern, "%", "*")
+	matchPattern = strings.ReplaceAll(matchPattern, "_", "?")
+
+	entries, err := s.searchEntries(r.Context(), matchPattern, caller)
+	if err != nil {
+		s.writeError(w, err)
+		return
+	}
+
+	ms := multistatus{XmlnsD: "DAV:", Responses: entries}
+	w.Header().Set("Content-Type", "text/xml; charset=utf-8")
+	w.WriteHeader(http.StatusMultiStatus)
+	xml.NewEncoder(w).Encode(ms)
+}
+
+func (s *Server) searchEntries(ctx context.Context, pattern string, caller core.CallerIdentity) ([]response, error) {
+	var results []response
+	for _, e := range s.fs.Snapshot() {
+		name := path.Base(e.Path)
+		matched, _ := path.Match(pattern, name)
+		if matched {
+			data, _ := s.fs.Read(ctx, e.Path, caller)
+			results = append(results, s.propfindResponse(e.Path, core.Stat{
+				Path: e.Path,
+				Kind: e.Kind,
+				Mode: e.Mode,
+				UID:  e.UID,
+				GID:  e.GID,
+				Size: int64(len(data)),
+			}, data))
+		}
+	}
+	return results, nil
+}
+
 func (s *Server) buildPropfindEntries(ctx context.Context, p string, depth string, caller core.CallerIdentity) ([]response, error) {
 	maxDepth := s.opts.MaxPropfindDepth
 	if maxDepth == 0 {
@@ -605,6 +650,20 @@ type prop struct {
 type resourceType struct {
 	XMLName    xml.Name `xml:"D:resourcetype"`
 	Collection string   `xml:"D:collection,omitempty"`
+}
+
+// DASL search XML structures.
+type searchRequest struct {
+	XMLName     xml.Name    `xml:"searchrequest"`
+	BasicSearch basicSearch `xml:"basicsearch"`
+}
+
+type basicSearch struct {
+	Where struct {
+		Like struct {
+			Literal string `xml:"literal"`
+		} `xml:"like"`
+	} `xml:"where"`
 }
 
 // Lock XML structures.
