@@ -55,6 +55,7 @@ func (s *Server) Options() adapter.MountOptions {
 
 func (s *Server) Mount(ctx context.Context) error {
 	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", s.handleHealthz)
 	mux.HandleFunc("/", s.handleWebDAV)
 
 	handler := middleware.RequestID(mux)
@@ -210,6 +211,12 @@ func (s *Server) handlePut(w http.ResponseWriter, r *http.Request, path string, 
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("ok\n"))
 }
 
 func (s *Server) handleOptions(w http.ResponseWriter, r *http.Request) {

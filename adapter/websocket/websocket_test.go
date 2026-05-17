@@ -2,6 +2,7 @@ package websocket
 
 import (
 	"context"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -153,6 +154,24 @@ func TestWebSocketDialTimeout(t *testing.T) {
 	}
 	if reply.Error != "unknown op" {
 		t.Fatalf("expected unknown op error, got: %+v", reply)
+	}
+}
+
+func TestWebSocketHealthz(t *testing.T) {
+	fs := core.NewFS(core.GlobalConfig{})
+	srv := New(fs, "127.0.0.1:0", adapter.MountOptions{})
+	if err := srv.Mount(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Unmount(context.Background())
+
+	resp, err := http.Get("http://" + srv.ln.Addr().String() + "/healthz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
 	}
 }
 
