@@ -1325,3 +1325,52 @@ func TestMountEntryValidation(t *testing.T) {
 		t.Fatalf("unexpected dir mount error: %v", err)
 	}
 }
+
+func TestDiffSnapshots(t *testing.T) {
+	old := []MountEntry{
+		{Path: "/a", Kind: KindBlob, Mode: 0o644, BlobData: []byte("a-data")},
+		{Path: "/b", Kind: KindDir, Mode: 0o755},
+		{Path: "/c", Kind: KindLink, Mode: 0o777, LinkPath: "/a"},
+	}
+	new := []MountEntry{
+		{Path: "/a", Kind: KindBlob, Mode: 0o644, BlobData: []byte("a-data")},
+		{Path: "/b", Kind: KindDir, Mode: 0o755},
+		{Path: "/d", Kind: KindBlob, Mode: 0o644, BlobData: []byte("d-data")},
+	}
+
+	diff := DiffSnapshots(old, new)
+	if len(diff.Added) != 1 || diff.Added[0].Path != "/d" {
+		t.Fatalf("expected /d added, got %+v", diff.Added)
+	}
+	if len(diff.Removed) != 1 || diff.Removed[0].Path != "/c" {
+		t.Fatalf("expected /c removed, got %+v", diff.Removed)
+	}
+	if len(diff.Modified) != 0 {
+		t.Fatalf("expected no modifications, got %+v", diff.Modified)
+	}
+
+	// Modify /b mode.
+	new[1].Mode = 0o700
+	diff = DiffSnapshots(old, new)
+	if len(diff.Modified) != 1 || diff.Modified[0].Path != "/b" {
+		t.Fatalf("expected /b modified, got %+v", diff.Modified)
+	}
+	if diff.Modified[0].Old.Mode != 0o755 || diff.Modified[0].New.Mode != 0o700 {
+		t.Fatal("mode change not captured")
+	}
+
+	// Modify blob data.
+	old[0].BlobData = []byte("old")
+	new[0].BlobData = []byte("new")
+	diff = DiffSnapshots(old, new)
+	if len(diff.Modified) != 2 {
+		t.Fatalf("expected 2 modifications, got %d", len(diff.Modified))
+	}
+}
+
+func TestDiffSnapshotsEmpty(t *testing.T) {
+	diff := DiffSnapshots(nil, nil)
+	if len(diff.Added) != 0 || len(diff.Removed) != 0 || len(diff.Modified) != 0 {
+		t.Fatal("expected empty diff for empty snapshots")
+	}
+}

@@ -1,6 +1,7 @@
 package core
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -506,6 +507,63 @@ func (fs *FileSystem) Restore(entries []MountEntry) error {
 		}
 	}
 	return nil
+}
+
+// DiffSnapshots compares two mount entry slices and returns added, removed,
+// and modified entries. Comparison ignores runtime-only fields (serial, ID).
+func DiffSnapshots(old, new []MountEntry) SnapshotDiff {
+	oldMap := make(map[string]MountEntry, len(old))
+	for _, e := range old {
+		oldMap[e.Path] = e
+	}
+	newMap := make(map[string]MountEntry, len(new))
+	for _, e := range new {
+		newMap[e.Path] = e
+	}
+
+	var diff SnapshotDiff
+	for _, e := range new {
+		if prev, ok := oldMap[e.Path]; !ok {
+			diff.Added = append(diff.Added, e)
+		} else if !mountEntryEqual(prev, e) {
+			diff.Modified = append(diff.Modified, MountEntryChange{Path: e.Path, Old: prev, New: e})
+		}
+	}
+	for _, e := range old {
+		if _, ok := newMap[e.Path]; !ok {
+			diff.Removed = append(diff.Removed, e)
+		}
+	}
+	return diff
+}
+
+func mountEntryEqual(a, b MountEntry) bool {
+	if a.Kind != b.Kind || a.Mode != b.Mode || a.UID != b.UID || a.GID != b.GID {
+		return false
+	}
+	if a.LinkPath != b.LinkPath || a.Visibility != b.Visibility {
+		return false
+	}
+	if !bytes.Equal(a.BlobData, b.BlobData) {
+		return false
+	}
+	if (a.Stream == nil) != (b.Stream == nil) {
+		return false
+	}
+	if a.Stream != nil && b.Stream != nil {
+		if a.Stream.Capacity != b.Stream.Capacity || a.Stream.Mode != b.Stream.Mode {
+			return false
+		}
+	}
+	if (a.Skill == nil) != (b.Skill == nil) {
+		return false
+	}
+	if a.Skill != nil && b.Skill != nil {
+		if a.Skill.Name != b.Skill.Name || a.Skill.Enabled != b.Skill.Enabled {
+			return false
+		}
+	}
+	return true
 }
 
 // ReadLink returns the target of a symlink without following it.
