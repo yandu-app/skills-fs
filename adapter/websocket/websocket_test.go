@@ -503,3 +503,138 @@ func TestWebSocketPingPong(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestWebSocketBatchRead(t *testing.T) {
+	fs := core.NewFS(core.GlobalConfig{})
+	if err := fs.Mount("/a", core.MountEntry{Kind: core.KindBlob, Mode: 0o644, BlobData: []byte("alpha")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Mount("/b", core.MountEntry{Kind: core.KindBlob, Mode: 0o644, BlobData: []byte("beta")}); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := New(fs, "127.0.0.1:0", adapter.MountOptions{})
+	if err := srv.Mount(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Unmount(context.Background())
+
+	origin := "http://" + srv.ln.Addr().String()
+	url := "ws://" + srv.ln.Addr().String() + "/"
+	ws, err := websocket.Dial(url, "", origin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.Close()
+
+	batch := WsMsg{
+		Op: "batch",
+		Ops: []WsMsg{
+			{Op: "read", Path: "/a"},
+			{Op: "read", Path: "/b"},
+		},
+	}
+	if err := websocket.JSON.Send(ws, batch); err != nil {
+		t.Fatal(err)
+	}
+	var reply WsReply
+	if err := websocket.JSON.Receive(ws, &reply); err != nil {
+		t.Fatal(err)
+	}
+	if reply.Op != "batch" {
+		t.Fatalf("expected batch reply, got %q", reply.Op)
+	}
+	if len(reply.Results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(reply.Results))
+	}
+	if reply.Results[0].Data != "alpha" {
+		t.Fatalf("expected alpha, got %q", reply.Results[0].Data)
+	}
+	if reply.Results[1].Data != "beta" {
+		t.Fatalf("expected beta, got %q", reply.Results[1].Data)
+	}
+}
+
+func TestWebSocketBatchWithError(t *testing.T) {
+	fs := core.NewFS(core.GlobalConfig{})
+	if err := fs.Mount("/a", core.MountEntry{Kind: core.KindBlob, Mode: 0o644, BlobData: []byte("alpha")}); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := New(fs, "127.0.0.1:0", adapter.MountOptions{})
+	if err := srv.Mount(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Unmount(context.Background())
+
+	origin := "http://" + srv.ln.Addr().String()
+	url := "ws://" + srv.ln.Addr().String() + "/"
+	ws, err := websocket.Dial(url, "", origin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.Close()
+
+	batch := WsMsg{
+		Op: "batch",
+		Ops: []WsMsg{
+			{Op: "read", Path: "/a"},
+			{Op: "read", Path: "/missing"},
+		},
+	}
+	if err := websocket.JSON.Send(ws, batch); err != nil {
+		t.Fatal(err)
+	}
+	var reply WsReply
+	if err := websocket.JSON.Receive(ws, &reply); err != nil {
+		t.Fatal(err)
+	}
+	if len(reply.Results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(reply.Results))
+	}
+	if reply.Results[0].Error != "" {
+		t.Fatalf("expected first op success, got error %q", reply.Results[0].Error)
+	}
+	if reply.Results[1].Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for missing path, got %d", reply.Results[1].Code)
+	}
+}
+
+func TestWebSocketBatchSizeLimit(t *testing.T) {
+	fs := core.NewFS(core.GlobalConfig{})
+	srv := New(fs, "127.0.0.1:0", adapter.MountOptions{MaxBatchSize: 2})
+	if err := srv.Mount(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Unmount(context.Background())
+
+	origin := "http://" + srv.ln.Addr().String()
+	url := "ws://" + srv.ln.Addr().String() + "/"
+	ws, err := websocket.Dial(url, "", origin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.Close()
+
+	batch := WsMsg{
+		Op: "batch",
+		Ops: []WsMsg{
+			{Op: "read", Path: "/a"},
+			{Op: "read", Path: "/b"},
+			{Op: "read", Path: "/c"},
+		},
+	}
+	if err := websocket.JSON.Send(ws, batch); err != nil {
+		t.Fatal(err)
+	}
+	var reply WsReply
+	if err := websocket.JSON.Receive(ws, &reply); err != nil {
+		t.Fatal(err)
+	}
+	if reply.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for oversized batch, got %d", reply.Code)
+	}
+	if reply.Error == "" {
+		t.Fatal("expected error for oversized batch")
+	}
+}
