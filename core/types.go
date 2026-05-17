@@ -28,6 +28,7 @@ type GlobalConfig struct {
 	Label             string
 	MaxOpenHandles    int
 	MaxMounts         int
+	MaxBlobSize       int64
 	ZeroCopyThreshold int
 	StatCacheTTL      time.Duration
 	DefaultUID        uint32
@@ -41,6 +42,9 @@ func (c GlobalConfig) withDefaults() GlobalConfig {
 	}
 	if c.MaxMounts == 0 {
 		c.MaxMounts = 10000
+	}
+	if c.MaxBlobSize == 0 {
+		c.MaxBlobSize = 64 * 1024 * 1024
 	}
 	if c.ZeroCopyThreshold == 0 {
 		c.ZeroCopyThreshold = 4096
