@@ -21,6 +21,8 @@ type MountOptions struct {
 	AllowedOrigins  []string      // empty = allow all (for WebSocket origin validation)
 	EnableGzip      bool          // compress GET/PROPFIND responses for WebDAV
 	ShutdownTimeout time.Duration // zero = use DefaultShutdownTimeout
+	RateLimitRPS    float64       // zero = no rate limiting
+	RateLimitBurst  int           // max burst size for rate limiter
 }
 
 // ShutdownContext returns a context with timeout if the supplied context has
