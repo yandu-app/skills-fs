@@ -202,6 +202,20 @@ func (s *Server) handleGet(w http.ResponseWriter, r *http.Request, path string, 
 	if err == nil {
 		w.Header().Set("Content-Type", contentTypeFromKind(stat.Kind))
 	}
+
+	if rng := r.Header.Get("Range"); rng != "" {
+		start, end, ok := parseRange(rng, int64(len(data)))
+		if !ok {
+			http.Error(w, "range not satisfiable", http.StatusRequestedRangeNotSatisfiable)
+			return
+		}
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, len(data)))
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", end-start+1))
+		w.WriteHeader(http.StatusPartialContent)
+		w.Write(data[start : end+1])
+		return
+	}
+
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))
 	w.Write(data)
 }
@@ -629,6 +643,49 @@ func etag(data []byte) string {
 
 func matchETag(reqETag, currentETag string) bool {
 	return reqETag == currentETag || reqETag == "*"
+}
+
+// parseRange parses a single "bytes=start-end" Range header.
+// It returns start, end (inclusive), and ok.
+func parseRange(rng string, total int64) (int64, int64, bool) {
+	const prefix = "bytes="
+	if !strings.HasPrefix(rng, prefix) {
+		return 0, 0, false
+	}
+	parts := strings.SplitN(strings.TrimPrefix(rng, prefix), "-", 2)
+	if len(parts) != 2 {
+		return 0, 0, false
+	}
+	var start, end int64
+	if parts[0] == "" {
+		// suffix range: bytes=-N means last N bytes
+		if _, err := fmt.Sscanf(parts[1], "%d", &end); err != nil {
+			return 0, 0, false
+		}
+		start = total - end
+		if start < 0 {
+			start = 0
+		}
+		end = total - 1
+	} else {
+		if _, err := fmt.Sscanf(parts[0], "%d", &start); err != nil {
+			return 0, 0, false
+		}
+		if parts[1] == "" {
+			end = total - 1
+		} else {
+			if _, err := fmt.Sscanf(parts[1], "%d", &end); err != nil {
+				return 0, 0, false
+			}
+		}
+	}
+	if start < 0 || start >= total || end < start {
+		return 0, 0, false
+	}
+	if end >= total {
+		end = total - 1
+	}
+	return start, end, true
 }
 
 func contentTypeFromKind(kind core.NodeKind) string {
