@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/pprof"
 	"net/url"
 	"path"
 	"strings"
@@ -56,6 +57,9 @@ func (s *Server) Options() adapter.MountOptions {
 func (s *Server) Mount(ctx context.Context) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", s.handleHealthz)
+	if s.opts.Debug {
+		mux.HandleFunc("/debug/pprof/", pprof.Index)
+	}
 	mux.HandleFunc("/", s.handleWebDAV)
 
 	handler := middleware.RequestID(mux)

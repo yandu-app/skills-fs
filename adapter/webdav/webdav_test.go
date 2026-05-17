@@ -809,6 +809,24 @@ func TestWebDAVProppatchReadOnly(t *testing.T) {
 	}
 }
 
+func TestWebDAVDebugEndpoint(t *testing.T) {
+	server := New(core.NewFS(core.GlobalConfig{}), "127.0.0.1:0", adapter.MountOptions{Debug: true})
+	if err := server.Mount(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Unmount(context.Background())
+
+	baseURL := "http://" + server.ln.Addr().String()
+	resp, err := http.Get(baseURL + "/debug/pprof/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+}
+
 func TestWebDAVHealthz(t *testing.T) {
 	server := New(core.NewFS(core.GlobalConfig{}), "127.0.0.1:0", adapter.MountOptions{})
 	if err := server.Mount(context.Background()); err != nil {

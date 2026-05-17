@@ -25,6 +25,7 @@ type MountOptions struct {
 	RateLimitBurst  int           // max burst size for rate limiter
 	CORSOrigins     []string      // empty = allow all origins
 	MaxConnections  int           // zero = unlimited concurrent connections
+	Debug           bool          // enable /debug/pprof endpoints
 }
 
 // ShutdownContext returns a context with timeout if the supplied context has
