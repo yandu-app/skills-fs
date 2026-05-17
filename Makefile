@@ -1,4 +1,4 @@
-.PHONY: test coverage coverage-all race bench build
+.PHONY: test coverage coverage-all race bench build gen-docs
 
 GOCACHE ?= /tmp/skills-fs-gocache
 
@@ -28,3 +28,13 @@ race:
 
 bench:
 	GOCACHE=$(GOCACHE) go test ./bench -bench . -benchmem
+
+DOCS_PKGS := core adapter adapter/fuse adapter/webdav adapter/websocket provider/cache provider/http provider/local
+
+gen-docs:
+	@mkdir -p docs/api
+	@for pkg in $(DOCS_PKGS); do \
+		out=$$(echo "$$pkg" | tr '/' '_'); \
+		echo "generating docs/api/$$out.md ..."; \
+		go run github.com/princjef/gomarkdoc/cmd/gomarkdoc@latest -o "docs/api/$$out.md" "./$$pkg"; \
+	done
