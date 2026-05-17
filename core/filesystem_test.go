@@ -1489,3 +1489,65 @@ func TestAuditLogging(t *testing.T) {
 		t.Fatalf("expected caller %+v, got %+v", caller, entries[1].Caller)
 	}
 }
+
+type slowProvider struct {
+	id    string
+	delay time.Duration
+}
+
+func (p *slowProvider) ID() string { return p.id }
+func (p *slowProvider) Invoke(ctx context.Context, action string, params map[string]interface{}) (*ProviderResult, error) {
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-time.After(p.delay):
+		return &ProviderResult{Data: []byte("ok")}, nil
+	}
+}
+
+func TestProviderTimeout(t *testing.T) {
+	p := &slowProvider{id: "slow", delay: 200 * time.Millisecond}
+	fs := NewFS(GlobalConfig{})
+	if err := fs.RegisterProvider(p); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Mount("/api", MountEntry{
+		Kind: KindAPI,
+		Mode: 0o644,
+		Ops: map[OpCode]*CapConfig{
+			OpRead: {ProviderID: "slow", Action: "test", Timeout: 10 * time.Millisecond},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := fs.Read(context.Background(), "/api", CallerIdentity{})
+	if !IsCode(err, ETIMEDOUT) {
+		t.Fatalf("expected ETIMEDOUT, got %v", err)
+	}
+}
+
+func TestProviderTimeoutSuccess(t *testing.T) {
+	p := &slowProvider{id: "slow", delay: 5 * time.Millisecond}
+	fs := NewFS(GlobalConfig{})
+	if err := fs.RegisterProvider(p); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Mount("/api", MountEntry{
+		Kind: KindAPI,
+		Mode: 0o644,
+		Ops: map[OpCode]*CapConfig{
+			OpRead: {ProviderID: "slow", Action: "test", Timeout: 200 * time.Millisecond},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := fs.Read(context.Background(), "/api", CallerIdentity{})
+	if err != nil {
+		t.Fatalf("expected success, got %v", err)
+	}
+	if string(data) != "ok" {
+		t.Fatalf("unexpected data %q", data)
+	}
+}

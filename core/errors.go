@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"errors"
 	"fmt"
 )
@@ -56,6 +57,9 @@ func IsCode(err error, code Errno) bool {
 func MapProviderError(err error, op OpCode, path string) error {
 	if err == nil {
 		return nil
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return posix(ETIMEDOUT, op, path, err)
 	}
 	switch err.Error() {
 	case "NOT_FOUND":
