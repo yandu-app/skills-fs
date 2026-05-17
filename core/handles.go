@@ -237,7 +237,7 @@ func (h *Handle) ReadAll(ctx context.Context) ([]byte, error) {
 	}
 	if h.mount.Kind == KindStream {
 		b := h.fs.streams.getOrCreate(h.path, h.mount.Stream)
-		buf := make([]byte, streamReadChunk)
+		buf := make([]byte, b.maxChunkSize)
 		n, err := b.read(buf, h.flags.Has(OpenNonBlock))
 		if err != nil {
 			return nil, err
@@ -258,8 +258,14 @@ func (h *Handle) Write(ctx context.Context, payload []byte) error {
 	}
 	if h.mount.Kind == KindStream {
 		b := h.fs.streams.getOrCreate(h.path, h.mount.Stream)
-		_, err := b.write(payload, h.flags.Has(OpenNonBlock))
-		return err
+		for len(payload) > 0 {
+			n, err := b.write(payload, h.flags.Has(OpenNonBlock))
+			if err != nil {
+				return err
+			}
+			payload = payload[n:]
+		}
+		return nil
 	}
 	if h.policy.Mode != WriteBuffered {
 		return h.fs.Write(ctx, h.path, payload, h.caller)

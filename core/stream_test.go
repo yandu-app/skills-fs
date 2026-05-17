@@ -287,3 +287,102 @@ func TestStreamMultipleHandlesShareBuffer(t *testing.T) {
 		t.Fatalf("expected shared, got %s", string(data))
 	}
 }
+
+func TestStreamWriteChunking(t *testing.T) {
+	fs := NewFS(GlobalConfig{})
+	if err := fs.Mount("/events", MountEntry{
+		Kind: KindStream,
+		Mode: 0o666,
+		Stream: &StreamConfig{
+			Capacity:     1024,
+			Mode:         BackpressureBlock,
+			MaxChunkSize: 4,
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	caller := CallerIdentity{}
+
+	if err := fs.Write(context.Background(), "/events", []byte("0123456789"), caller); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := fs.Read(context.Background(), "/events", caller)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "0123" {
+		t.Fatalf("expected first chunk '0123', got %q", string(data))
+	}
+
+	data, err = fs.Read(context.Background(), "/events", caller)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "4567" {
+		t.Fatalf("expected second chunk '4567', got %q", string(data))
+	}
+
+	data, err = fs.Read(context.Background(), "/events", caller)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "89" {
+		t.Fatalf("expected third chunk '89', got %q", string(data))
+	}
+}
+
+func TestStreamHandleChunkedWrite(t *testing.T) {
+	fs := NewFS(GlobalConfig{})
+	if err := fs.Mount("/events", MountEntry{
+		Kind: KindStream,
+		Mode: 0o666,
+		Stream: &StreamConfig{
+			Capacity:     1024,
+			Mode:         BackpressureBlock,
+			MaxChunkSize: 3,
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	hw, err := fs.Open("/events", OpenWrite, CallerIdentity{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer hw.Close(context.Background())
+
+	hr, err := fs.Open("/events", OpenRead, CallerIdentity{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer hr.Close(context.Background())
+
+	if err := hw.Write(context.Background(), []byte("abcdefg")); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := hr.ReadAll(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "abc" {
+		t.Fatalf("expected first chunk 'abc', got %q", string(data))
+	}
+
+	data, err = hr.ReadAll(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "def" {
+		t.Fatalf("expected second chunk 'def', got %q", string(data))
+	}
+
+	data, err = hr.ReadAll(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "g" {
+		t.Fatalf("expected third chunk 'g', got %q", string(data))
+	}
+}

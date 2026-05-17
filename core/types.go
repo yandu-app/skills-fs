@@ -96,8 +96,9 @@ const (
 )
 
 type StreamConfig struct {
-	Capacity int
-	Mode     BackpressureMode
+	Capacity     int
+	Mode         BackpressureMode
+	MaxChunkSize int // max bytes per read/write; zero = default (64 KiB)
 }
 
 type MountEntry struct {
