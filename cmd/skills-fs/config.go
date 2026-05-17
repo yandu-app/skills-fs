@@ -73,6 +73,43 @@ func (c *Config) BuildFS() (*core.FileSystem, error) {
 	return fs, nil
 }
 
+// Reload applies configuration changes to an existing filesystem.
+// It unmounts removed entries, remounts modified entries, and mounts new ones.
+func (c *Config) Reload(fs *core.FileSystem) error {
+	current := fs.Snapshot()
+
+	desired := make([]core.MountEntry, 0, len(c.Mounts))
+	for _, mc := range c.Mounts {
+		entry, err := mc.toMountEntry()
+		if err != nil {
+			return fmt.Errorf("mount %s: %w", mc.Path, err)
+		}
+		entry.Path = mc.Path
+		desired = append(desired, entry)
+	}
+
+	diff := core.DiffSnapshots(current, desired)
+	for _, e := range diff.Removed {
+		if err := fs.Unmount(e.Path); err != nil {
+			return fmt.Errorf("unmount %s: %w", e.Path, err)
+		}
+	}
+	for _, ch := range diff.Modified {
+		if err := fs.Unmount(ch.Path); err != nil {
+			return fmt.Errorf("unmount %s: %w", ch.Path, err)
+		}
+		if err := fs.Mount(ch.New.Path, ch.New); err != nil {
+			return fmt.Errorf("mount %s: %w", ch.New.Path, err)
+		}
+	}
+	for _, e := range diff.Added {
+		if err := fs.Mount(e.Path, e); err != nil {
+			return fmt.Errorf("mount %s: %w", e.Path, err)
+		}
+	}
+	return nil
+}
+
 func (mc *MountConfig) toMountEntry() (core.MountEntry, error) {
 	mode := uint32(0o644)
 	if mc.Mode != "" {
