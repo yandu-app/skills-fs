@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"time"
 )
 
@@ -87,6 +88,37 @@ func (c GlobalConfig) withDefaults() GlobalConfig {
 	return c
 }
 
+func (c GlobalConfig) Validate() error {
+	if c.MaxOpenHandles < 0 {
+		return fmt.Errorf("MaxOpenHandles must be non-negative")
+	}
+	if c.MaxMounts < 0 {
+		return fmt.Errorf("MaxMounts must be non-negative")
+	}
+	if c.MaxBlobSize < 0 {
+		return fmt.Errorf("MaxBlobSize must be non-negative")
+	}
+	if c.ZeroCopyThreshold < 0 {
+		return fmt.Errorf("ZeroCopyThreshold must be non-negative")
+	}
+	if c.StatCacheTTL < 0 {
+		return fmt.Errorf("StatCacheTTL must be non-negative")
+	}
+	if c.LockTimeout < 0 {
+		return fmt.Errorf("LockTimeout must be non-negative")
+	}
+	if c.Breaker.FailureThreshold < 0 {
+		return fmt.Errorf("Breaker.FailureThreshold must be non-negative")
+	}
+	if c.Breaker.ResetTimeout < 0 {
+		return fmt.Errorf("Breaker.ResetTimeout must be non-negative")
+	}
+	if c.Breaker.HalfOpenMaxCalls < 0 {
+		return fmt.Errorf("Breaker.HalfOpenMaxCalls must be non-negative")
+	}
+	return nil
+}
+
 type BackpressureMode int
 
 const (
@@ -119,6 +151,47 @@ type MountEntry struct {
 	BlobData []byte
 	LinkPath string
 	serial   *serialQueue
+}
+
+func (e MountEntry) Validate() error {
+	switch e.Kind {
+	case KindBlob, KindAPI, KindStream, KindDir, KindLink:
+		// valid
+	default:
+		return fmt.Errorf("invalid kind %q", e.Kind)
+	}
+	if len(e.BlobData) > 0 && e.Kind != KindBlob {
+		return fmt.Errorf("BlobData set for non-blob kind %q", e.Kind)
+	}
+	if e.LinkPath != "" && e.Kind != KindLink {
+		return fmt.Errorf("LinkPath set for non-link kind %q", e.Kind)
+	}
+	if e.Stream != nil {
+		if e.Kind != KindStream {
+			return fmt.Errorf("stream config set for non-stream kind %q", e.Kind)
+		}
+		if e.Stream.Capacity <= 0 {
+			return fmt.Errorf("stream capacity must be positive")
+		}
+		if e.Stream.MaxChunkSize < 0 {
+			return fmt.Errorf("stream MaxChunkSize must be non-negative")
+		}
+	}
+	if e.Skill != nil && e.Skill.Enabled && e.Skill.Name == "" {
+		return fmt.Errorf("enabled skill requires Name")
+	}
+	if e.Visibility != "" && e.Visibility != "public" && e.Visibility != "private" {
+		return fmt.Errorf("invalid visibility %q", e.Visibility)
+	}
+	for op, cap := range e.Ops {
+		if cap == nil {
+			continue
+		}
+		if cap.ProviderID == "" {
+			return fmt.Errorf("operation %q requires ProviderID", op)
+		}
+	}
+	return nil
 }
 
 type CapConfig struct {
