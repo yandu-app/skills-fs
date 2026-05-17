@@ -221,3 +221,97 @@ func TestFlockNoneKind(t *testing.T) {
 		t.Fatalf("lock should be released after LockNone, shared=%d excl=%v", shared, excl)
 	}
 }
+
+func TestReleaseAfterPurge(t *testing.T) {
+	fs := NewFS(GlobalConfig{})
+	if err := fs.Mount("/blob", MountEntry{Kind: KindBlob, Mode: 0o666}); err != nil {
+		t.Fatal(err)
+	}
+	h, err := fs.Open("/blob", OpenRead|OpenWrite, CallerIdentity{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.Flock(context.Background(), LockExclusive, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Unmount("/blob"); err != nil {
+		t.Fatal(err)
+	}
+	// Closing the handle after unmount purges the lock state, so release sees !ok.
+	if err := h.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestFlushPrefixLockedZero(t *testing.T) {
+	fs := NewFS(GlobalConfig{})
+	if err := fs.Mount("/blob", MountEntry{Kind: KindBlob, Mode: 0o666}); err != nil {
+		t.Fatal(err)
+	}
+	h, err := fs.Open("/blob", OpenRead|OpenWrite, CallerIdentity{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Close(context.Background())
+
+	h.mu.Lock()
+	err = h.flushPrefixLocked(context.Background(), 0)
+	h.mu.Unlock()
+	if err != nil {
+		t.Fatalf("flushPrefixLocked(0) should return nil, got %v", err)
+	}
+}
+
+func TestTimerStopBranch(t *testing.T) {
+	fs := NewFS(GlobalConfig{})
+	if err := fs.Mount("/blob", MountEntry{
+		Kind:         KindBlob,
+		Mode:         0o666,
+		BufferPolicy: &WriteBufferPolicy{Mode: WriteBuffered, MaxDelay: 50 * time.Millisecond},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	h, err := fs.Open("/blob", OpenWrite, CallerIdentity{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Close(context.Background())
+
+	// Start the timer manually so we can close its stop channel before it fires.
+	h.mu.Lock()
+	h.startTimerLocked()
+	close(h.timerCh)
+	h.timerCh = nil
+	h.timer = nil
+	h.mu.Unlock()
+
+	// Wait for the AfterFunc goroutine to run and hit the stop branch.
+	time.Sleep(100 * time.Millisecond)
+}
+
+func TestFlushPrefixLockedWriteError(t *testing.T) {
+	fs := NewFS(GlobalConfig{})
+	if err := fs.Mount("/blob", MountEntry{
+		Kind:         KindBlob,
+		Mode:         0o666,
+		BufferPolicy: &WriteBufferPolicy{Mode: WriteBuffered, MaxSize: 1024},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	h, err := fs.Open("/blob", OpenWrite, CallerIdentity{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Close(context.Background())
+
+	if err := h.Write(context.Background(), []byte("data")); err != nil {
+		t.Fatal(err)
+	}
+	// Unmount while data is still buffered so flushPrefixLocked sees ENOENT.
+	if err := fs.Unmount("/blob"); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.Flush(context.Background()); !IsCode(err, ENOENT) {
+		t.Fatalf("expected ENOENT on flush after unmount, got %v", err)
+	}
+}
