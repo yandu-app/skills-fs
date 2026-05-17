@@ -1240,6 +1240,21 @@ func TestShutdown(t *testing.T) {
 	}
 }
 
+func TestShutdownRespectsContextCancellation(t *testing.T) {
+	fs := NewFS(GlobalConfig{})
+	if err := fs.Mount("/blob", MountEntry{Kind: KindBlob, Mode: 0o666, BlobData: []byte("x")}); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = fs.Open("/blob", OpenRead, CallerIdentity{})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if err := fs.Shutdown(ctx); err != context.Canceled {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+}
+
 func TestShutdownClosesStreams(t *testing.T) {
 	fs := NewFS(GlobalConfig{})
 	if err := fs.Mount("/events", MountEntry{
