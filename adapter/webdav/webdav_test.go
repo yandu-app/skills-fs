@@ -9,6 +9,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/json"
 	"encoding/pem"
 	"encoding/xml"
 	"io"
@@ -25,6 +26,15 @@ import (
 	"github.com/skills-fs/skills-fs/core"
 	httpprovider "github.com/skills-fs/skills-fs/provider/http"
 )
+
+type fakeProvider struct {
+	id string
+}
+
+func (p *fakeProvider) ID() string { return p.id }
+func (p *fakeProvider) Invoke(ctx context.Context, action string, params map[string]interface{}) (*core.ProviderResult, error) {
+	return nil, nil
+}
 
 func TestWebDAVGetAndPut(t *testing.T) {
 	fs := core.NewFS(core.GlobalConfig{})
@@ -864,7 +874,8 @@ func TestWebDAVDebugEndpoint(t *testing.T) {
 }
 
 func TestWebDAVHealthz(t *testing.T) {
-	server := New(core.NewFS(core.GlobalConfig{}), "127.0.0.1:0", adapter.MountOptions{})
+	fs := core.NewFS(core.GlobalConfig{})
+	server := New(fs, "127.0.0.1:0", adapter.MountOptions{})
 	if err := server.Mount(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -879,9 +890,44 @@ func TestWebDAVHealthz(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", resp.StatusCode)
 	}
-	body, _ := io.ReadAll(resp.Body)
-	if string(body) != "ok\n" {
-		t.Fatalf("unexpected body: %q", body)
+	if ct := resp.Header.Get("Content-Type"); !strings.Contains(ct, "application/json") {
+		t.Fatalf("expected JSON content type, got %q", ct)
+	}
+	var body map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body["status"] != "ok" {
+		t.Fatalf("expected status ok, got %+v", body)
+	}
+	if _, ok := body["providers"]; !ok {
+		t.Fatal("missing providers field")
+	}
+}
+
+func TestWebDAVHealthzWithProvider(t *testing.T) {
+	fs := core.NewFS(core.GlobalConfig{})
+	if err := fs.RegisterProvider(&fakeProvider{id: "p1"}); err != nil {
+		t.Fatal(err)
+	}
+	server := New(fs, "127.0.0.1:0", adapter.MountOptions{})
+	if err := server.Mount(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer server.Unmount(context.Background())
+
+	resp, err := http.Get("http://" + server.ln.Addr().String() + "/healthz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var body map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	providers, _ := body["providers"].(map[string]interface{})
+	if providers["p1"] != "unknown" {
+		t.Fatalf("expected p1=unknown, got %+v", providers)
 	}
 }
 
