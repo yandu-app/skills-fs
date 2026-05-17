@@ -35,6 +35,14 @@ type GlobalConfig struct {
 	DefaultGID        uint32
 	SkillsRoot        string
 	LockTimeout       time.Duration // advisory lock acquisition timeout
+	Breaker           CircuitBreakerConfig
+}
+
+type CircuitBreakerConfig struct {
+	Enabled          bool
+	FailureThreshold int           // consecutive failures before opening
+	ResetTimeout     time.Duration // time before trying half-open
+	HalfOpenMaxCalls int           // successful calls needed to close
 }
 
 func (c GlobalConfig) withDefaults() GlobalConfig {
@@ -52,6 +60,15 @@ func (c GlobalConfig) withDefaults() GlobalConfig {
 	}
 	if c.LockTimeout == 0 {
 		c.LockTimeout = 30 * time.Second
+	}
+	if c.Breaker.FailureThreshold == 0 {
+		c.Breaker.FailureThreshold = 5
+	}
+	if c.Breaker.ResetTimeout == 0 {
+		c.Breaker.ResetTimeout = 30 * time.Second
+	}
+	if c.Breaker.HalfOpenMaxCalls == 0 {
+		c.Breaker.HalfOpenMaxCalls = 1
 	}
 	return c
 }

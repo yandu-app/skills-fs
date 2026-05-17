@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -1372,5 +1373,68 @@ func TestDiffSnapshotsEmpty(t *testing.T) {
 	diff := DiffSnapshots(nil, nil)
 	if len(diff.Added) != 0 || len(diff.Removed) != 0 || len(diff.Modified) != 0 {
 		t.Fatal("expected empty diff for empty snapshots")
+	}
+}
+
+func TestCircuitBreaker(t *testing.T) {
+	fp := &fakeProvider{id: "p1", err: fmt.Errorf("fail")}
+	fs := NewFS(GlobalConfig{Breaker: CircuitBreakerConfig{Enabled: true, FailureThreshold: 3, ResetTimeout: 100 * time.Millisecond, HalfOpenMaxCalls: 1}})
+	if err := fs.RegisterProvider(fp); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Mount("/api", MountEntry{Kind: KindAPI, Mode: 0o644, Ops: map[OpCode]*CapConfig{OpRead: {ProviderID: "p1", Action: "test"}}});
+	err != nil {
+		t.Fatal(err)
+	}
+
+	// Trigger 3 failures to open the breaker.
+	for i := 0; i < 3; i++ {
+		_, err := fs.Read(context.Background(), "/api", CallerIdentity{})
+		if err == nil {
+			t.Fatal("expected provider error")
+		}
+	}
+
+	// Next call should be rejected by breaker.
+	_, err := fs.Read(context.Background(), "/api", CallerIdentity{})
+	if err == nil {
+		t.Fatal("expected breaker error")
+	}
+	if !IsCode(err, ECOMM) {
+		t.Fatalf("expected ECOMM, got %v", err)
+	}
+
+	// Wait for reset timeout to enter half-open.
+	time.Sleep(150 * time.Millisecond)
+
+	// With fakeProvider still failing, half-open call fails and re-opens breaker.
+	_, err = fs.Read(context.Background(), "/api", CallerIdentity{})
+	if err == nil {
+		t.Fatal("expected provider error in half-open")
+	}
+
+	// Switch provider to success.
+	fp.err = nil
+	fp.response = []byte("ok")
+
+	// Wait again for half-open.
+	time.Sleep(150 * time.Millisecond)
+
+	// Half-open success should close breaker.
+	data, err := fs.Read(context.Background(), "/api", CallerIdentity{})
+	if err != nil {
+		t.Fatalf("expected success after breaker close, got %v", err)
+	}
+	if string(data) != "ok" {
+		t.Fatalf("unexpected data: %q", data)
+	}
+
+	// Subsequent calls should work normally.
+	data, err = fs.Read(context.Background(), "/api", CallerIdentity{})
+	if err != nil {
+		t.Fatalf("expected success, got %v", err)
+	}
+	if string(data) != "ok" {
+		t.Fatalf("unexpected data: %q", data)
 	}
 }

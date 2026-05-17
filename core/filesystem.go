@@ -48,17 +48,19 @@ func normalizePath(p string) (string, error) {
 }
 
 type FileSystem struct {
-	cfg       GlobalConfig
-	router    *router
-	providers map[string]Provider
-	handles   *handleManager
-	locks     *lockManager
-	streams   *streamManager
-	metrics   *Metrics
-	skills    *SkillGenerator
-	events    *eventBus
-	bufPool   sync.Pool
-	mu        sync.RWMutex
+	cfg        GlobalConfig
+	router     *router
+	providers  map[string]Provider
+	handles    *handleManager
+	locks      *lockManager
+	streams    *streamManager
+	metrics    *Metrics
+	skills     *SkillGenerator
+	events     *eventBus
+	bufPool    sync.Pool
+	breakers   map[string]*circuitBreaker
+	breakersMu sync.Mutex
+	mu         sync.RWMutex
 }
 
 func NewFS(cfg GlobalConfig) *FileSystem {
@@ -73,6 +75,7 @@ func NewFS(cfg GlobalConfig) *FileSystem {
 		metrics:   newMetrics(),
 		skills:    NewSkillGenerator(cfg.SkillsRoot),
 		events:    newEventBus(),
+		breakers:  make(map[string]*circuitBreaker),
 		bufPool: sync.Pool{
 			New: func() interface{} {
 				b := make([]byte, streamReadChunk)
@@ -372,10 +375,15 @@ func (fs *FileSystem) Read(ctx context.Context, path string, caller CallerIdenti
 			return nil, err
 		}
 		if cap.Async {
-			go invokeProvider(context.Background(), provider, cap, OpRead, path, params, nil, caller)
+			go func() {
+				_, err := invokeProvider(context.Background(), provider, cap, OpRead, path, params, nil, caller)
+				fs.recordBreakerResult(cap.ProviderID, err == nil)
+			}()
 			return []byte{}, nil
 		}
-		return invokeProvider(ctx, provider, cap, OpRead, path, params, nil, caller)
+		data, err := invokeProvider(ctx, provider, cap, OpRead, path, params, nil, caller)
+		fs.recordBreakerResult(cap.ProviderID, err == nil)
+		return data, err
 	case KindLink:
 		target := []byte(m.LinkPath)
 		fs.mu.RUnlock()
@@ -448,6 +456,7 @@ func (fs *FileSystem) Write(ctx context.Context, path string, payload []byte, ca
 		}
 		return serial.run(func() error {
 			_, err := invokeProvider(ctx, provider, cap, OpWrite, path, params, payload, caller)
+			fs.recordBreakerResult(cap.ProviderID, err == nil)
 			return err
 		})
 	case KindStream:
@@ -615,6 +624,9 @@ func (fs *FileSystem) providerFor(m *MountEntry, op OpCode, path string) (*CapCo
 	if provider == nil {
 		return nil, nil, posix(ECOMM, op, path, nil)
 	}
+	if fs.breakerOpen(cap.ProviderID) {
+		return nil, nil, posix(ECOMM, op, path, fmt.Errorf("circuit breaker open for provider %s", cap.ProviderID))
+	}
 	return cap, provider, nil
 }
 
@@ -667,6 +679,78 @@ func validateMountEntry(entry *MountEntry) error {
 		return fmt.Errorf("invalid visibility %q", entry.Visibility)
 	}
 	return nil
+}
+
+// circuit breaker states.
+const (
+	cbClosed = iota
+	cbOpen
+	cbHalfOpen
+)
+
+type circuitBreaker struct {
+	state       int
+	failures    int
+	successes   int
+	lastFailure time.Time
+	mu          sync.Mutex
+}
+
+func (fs *FileSystem) breakerFor(id string) *circuitBreaker {
+	fs.breakersMu.Lock()
+	defer fs.breakersMu.Unlock()
+	b, ok := fs.breakers[id]
+	if !ok {
+		b = &circuitBreaker{state: cbClosed}
+		fs.breakers[id] = b
+	}
+	return b
+}
+
+func (fs *FileSystem) breakerOpen(id string) bool {
+	if !fs.cfg.Breaker.Enabled {
+		return false
+	}
+	b := fs.breakerFor(id)
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.state == cbOpen {
+		if time.Since(b.lastFailure) > fs.cfg.Breaker.ResetTimeout {
+			b.state = cbHalfOpen
+			b.failures = 0
+			b.successes = 0
+			return false
+		}
+		return true
+	}
+	return false
+}
+
+func (fs *FileSystem) recordBreakerResult(id string, success bool) {
+	if !fs.cfg.Breaker.Enabled {
+		return
+	}
+	b := fs.breakerFor(id)
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if success {
+		if b.state == cbHalfOpen {
+			b.successes++
+			if b.successes >= fs.cfg.Breaker.HalfOpenMaxCalls {
+				b.state = cbClosed
+				b.failures = 0
+				b.successes = 0
+			}
+		} else {
+			b.failures = 0
+		}
+	} else {
+		b.failures++
+		b.lastFailure = time.Now()
+		if b.failures >= fs.cfg.Breaker.FailureThreshold {
+			b.state = cbOpen
+		}
+	}
 }
 
 func skillDirPath(path string) (string, bool) {
