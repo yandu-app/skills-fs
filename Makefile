@@ -1,4 +1,4 @@
-.PHONY: all test coverage coverage-all race bench build gen-docs lint vulncheck clean fmt fmt-check binding-go binding-node binding-python
+.PHONY: all test coverage coverage-all race bench build gen-docs lint vulncheck clean fmt fmt-check binding-go binding-node binding-python binding-test
 
 GOCACHE ?= /tmp/skills-fs-gocache
 
@@ -75,3 +75,7 @@ binding-python:
 		-o binding/python/lib/libgobridge.so \
 		./binding/go-bridge
 	@echo "Python module ready.  cd binding/python && python3 test_skills_fs.py"
+
+binding-test: binding-node binding-python
+	cd binding/nodejs && npm test
+	cd binding/python && python3 test_skills_fs.py
