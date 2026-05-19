@@ -1,4 +1,4 @@
-.PHONY: all test coverage coverage-all race bench build gen-docs lint vulncheck clean fmt fmt-check binding-go binding-node binding-python binding-test
+.PHONY: all test coverage coverage-all race bench build gen-docs lint vulncheck clean fmt fmt-check binding-go binding-node binding-python binding-test quick
 
 GOCACHE ?= /tmp/skills-fs-gocache
 
@@ -79,3 +79,7 @@ binding-python:
 binding-test: binding-node binding-python
 	cd binding/nodejs && npm test
 	cd binding/python && python3 test_skills_fs.py
+
+quick: fmt-check
+	go vet ./...
+	go test ./core ./binding/registry ./provider/... -count=1

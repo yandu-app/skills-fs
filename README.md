@@ -64,6 +64,7 @@ Metrics:
 
 ```sh
 make all      # lint + test + vulncheck
+make quick    # fmt + vet + core/registry/provider tests (fast)
 make lint     # go vet + staticcheck
 make test     # run all tests
 make race     # run core tests with race detector
