@@ -1,4 +1,4 @@
-.PHONY: all test coverage coverage-all race bench build gen-docs lint vulncheck clean fmt fmt-check
+.PHONY: all test coverage coverage-all race bench build gen-docs lint vulncheck clean fmt fmt-check binding-go binding-node
 
 GOCACHE ?= /tmp/skills-fs-gocache
 
@@ -56,3 +56,13 @@ fmt-check:
 
 clean:
 	rm -f skills-fs webdav-server websocket-events websocket-reconnect basic coverage.out
+	rm -rf binding/nodejs/lib binding/nodejs/build
+
+binding-go:
+	@mkdir -p binding/nodejs/lib
+	go build -buildmode=c-shared \
+		-o binding/nodejs/lib/libgobridge.so \
+		./binding/go-bridge
+
+binding-node: binding-go
+	cd binding/nodejs && npm install --no-audit --no-fund && npm run build

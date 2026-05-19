@@ -1,0 +1,14 @@
+{
+  "name": "skills-fs-nodejs",
+  "version": "0.1.0",
+  "description": "Node.js N-API binding for skills-fs",
+  "main": "index.js",
+  "scripts": {
+    "build": "node-gyp rebuild",
+    "test": "node test.js"
+  },
+  "devDependencies": {
+    "node-gyp": "^10.0.0"
+  },
+  "gypfile": true
+}
