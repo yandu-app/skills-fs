@@ -1,4 +1,4 @@
-.PHONY: all test coverage coverage-all race bench build gen-docs lint vulncheck clean fmt fmt-check binding-go binding-node binding-python binding-test quick
+.PHONY: all test coverage coverage-all race bench build gen-docs lint vulncheck clean fmt fmt-check binding-go binding-node binding-python binding-test quick ci
 
 GOCACHE ?= /tmp/skills-fs-gocache
 
@@ -83,3 +83,6 @@ binding-test: binding-node binding-python
 quick: fmt-check
 	go vet ./...
 	go test ./core ./binding/registry ./provider/... -count=1
+
+ci: fmt-check lint test coverage race vulncheck bench
+	@echo "All CI checks passed."
