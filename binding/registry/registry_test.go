@@ -76,6 +76,45 @@ func TestUnregisterMissingHandleReturnsFalse(t *testing.T) {
 	}
 }
 
+func TestSetAndGetLastError(t *testing.T) {
+	r := New()
+	h := r.Register(core.NewFS(core.GlobalConfig{}))
+
+	if got := r.LastError(h); got != "" {
+		t.Fatalf("LastError on fresh handle: got %q want \"\"", got)
+	}
+
+	r.SetError(h, "boom")
+	if got := r.LastError(h); got != "boom" {
+		t.Fatalf("LastError after SetError: got %q want \"boom\"", got)
+	}
+
+	r.SetError(h, "")
+	if got := r.LastError(h); got != "" {
+		t.Fatalf("LastError after clearing: got %q want \"\"", got)
+	}
+}
+
+func TestUnregisterClearsErrorSlot(t *testing.T) {
+	r := New()
+	h := r.Register(core.NewFS(core.GlobalConfig{}))
+	r.SetError(h, "boom")
+
+	if _, ok := r.Unregister(h); !ok {
+		t.Fatalf("Unregister(valid) returned ok=false")
+	}
+	if got := r.LastError(h); got != "" {
+		t.Fatalf("LastError after Unregister: got %q want \"\"", got)
+	}
+}
+
+func TestLastErrorMissingHandleReturnsEmpty(t *testing.T) {
+	r := New()
+	if got := r.LastError(42); got != "" {
+		t.Fatalf("LastError on missing handle: got %q want \"\"", got)
+	}
+}
+
 func TestConcurrentRegisterUnregister(t *testing.T) {
 	r := New()
 	const goroutines = 32

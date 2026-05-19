@@ -17,15 +17,23 @@ import (
 //
 // Handles are dense, monotonically increasing, and start at 1 — zero is
 // reserved so callers may use it as an "invalid handle" sentinel.
+//
+// Each handle also carries an optional last-error string. The C ABI uses
+// it to deliver Go error messages back to host languages without forcing
+// every export to grow an error-out parameter.
 type Registry struct {
 	mu      sync.Mutex
 	counter uintptr
 	fs      map[uintptr]*core.FileSystem
+	err     map[uintptr]string
 }
 
 // New returns an empty Registry.
 func New() *Registry {
-	return &Registry{fs: make(map[uintptr]*core.FileSystem)}
+	return &Registry{
+		fs:  make(map[uintptr]*core.FileSystem),
+		err: make(map[uintptr]string),
+	}
 }
 
 // Register adds fs to the registry and returns its handle. The caller
@@ -60,7 +68,29 @@ func (r *Registry) Unregister(handle uintptr) (*core.FileSystem, bool) {
 		return nil, false
 	}
 	delete(r.fs, handle)
+	delete(r.err, handle)
 	return fs, true
+}
+
+// SetError stores msg as the last error for handle. Passing an empty
+// msg clears any stored error. Callers should clear after every
+// successful operation so a stale message does not bleed into the next
+// failure.
+func (r *Registry) SetError(handle uintptr, msg string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if msg == "" {
+		delete(r.err, handle)
+		return
+	}
+	r.err[handle] = msg
+}
+
+// LastError returns the last error stored for handle, or "" if none.
+func (r *Registry) LastError(handle uintptr) string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.err[handle]
 }
 
 // Len returns the number of registered handles. Exposed primarily for
