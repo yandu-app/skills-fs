@@ -140,8 +140,9 @@ func (s *Server) Mount(ctx context.Context) error {
 	}
 
 	s.srv = &http.Server{
-		Addr:    s.addr,
-		Handler: handler,
+		Addr:              s.addr,
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
 	}
 
 	ln, err := net.Listen("tcp", s.addr)
