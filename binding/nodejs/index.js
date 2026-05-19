@@ -34,6 +34,22 @@ class FileSystem {
     }
   }
 
+  unmount(path) {
+    this._assertOpen();
+    const rc = addon.unmount(this._handle, path);
+    if (rc !== 0) {
+      throw new Error(`unmount(${path}) failed: rc=${rc}`);
+    }
+  }
+
+  rename(oldPath, newPath) {
+    this._assertOpen();
+    const rc = addon.rename(this._handle, oldPath, newPath);
+    if (rc !== 0) {
+      throw new Error(`rename(${oldPath} -> ${newPath}) failed: rc=${rc}`);
+    }
+  }
+
   shutdown() {
     if (this._closed) return;
     addon.shutdown(this._handle);

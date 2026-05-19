@@ -69,6 +69,30 @@ func skills_fs_mount_api(handle C.uintptr_t, path *C.char, providerID *C.char, a
 	return 0
 }
 
+//export skills_fs_unmount
+func skills_fs_unmount(handle C.uintptr_t, path *C.char) C.int {
+	fs, ok := reg.Get(uintptr(handle))
+	if !ok {
+		return -1
+	}
+	if err := fs.Unmount(C.GoString(path)); err != nil {
+		return -1
+	}
+	return 0
+}
+
+//export skills_fs_rename
+func skills_fs_rename(handle C.uintptr_t, oldPath *C.char, newPath *C.char) C.int {
+	fs, ok := reg.Get(uintptr(handle))
+	if !ok {
+		return -1
+	}
+	if err := fs.Rename(C.GoString(oldPath), C.GoString(newPath)); err != nil {
+		return -1
+	}
+	return 0
+}
+
 //export skills_fs_read
 func skills_fs_read(handle C.uintptr_t, path *C.char, outLen *C.int) *C.char {
 	fs, ok := reg.Get(uintptr(handle))

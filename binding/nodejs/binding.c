@@ -105,11 +105,55 @@ static napi_value Write(napi_env env, napi_callback_info info) {
   return result;
 }
 
+static napi_value Unmount(napi_env env, napi_callback_info info) {
+  size_t argc = 2;
+  napi_value args[2];
+  NAPI_CALL(env, napi_get_cb_info(env, info, &argc, args, NULL, NULL));
+
+  bool lossless;
+  uint64_t handle;
+  NAPI_CALL(env, napi_get_value_bigint_uint64(env, args[0], &handle, &lossless));
+
+  size_t path_len;
+  char path_buf[4096];
+  NAPI_CALL(env, napi_get_value_string_utf8(env, args[1], path_buf, sizeof(path_buf), &path_len));
+
+  int rc = skills_fs_unmount((uintptr_t)handle, path_buf);
+  napi_value result;
+  NAPI_CALL(env, napi_create_int32(env, rc, &result));
+  return result;
+}
+
+static napi_value Rename(napi_env env, napi_callback_info info) {
+  size_t argc = 3;
+  napi_value args[3];
+  NAPI_CALL(env, napi_get_cb_info(env, info, &argc, args, NULL, NULL));
+
+  bool lossless;
+  uint64_t handle;
+  NAPI_CALL(env, napi_get_value_bigint_uint64(env, args[0], &handle, &lossless));
+
+  size_t old_len;
+  char old_buf[4096];
+  NAPI_CALL(env, napi_get_value_string_utf8(env, args[1], old_buf, sizeof(old_buf), &old_len));
+
+  size_t new_len;
+  char new_buf[4096];
+  NAPI_CALL(env, napi_get_value_string_utf8(env, args[2], new_buf, sizeof(new_buf), &new_len));
+
+  int rc = skills_fs_rename((uintptr_t)handle, old_buf, new_buf);
+  napi_value result;
+  NAPI_CALL(env, napi_create_int32(env, rc, &result));
+  return result;
+}
+
 static napi_value Init(napi_env env, napi_value exports) {
   napi_property_descriptor descs[] = {
       {"createFS", NULL, CreateFS, NULL, NULL, NULL, napi_default, NULL},
       {"shutdown", NULL, Shutdown, NULL, NULL, NULL, napi_default, NULL},
       {"mountBlob", NULL, MountBlob, NULL, NULL, NULL, napi_default, NULL},
+      {"unmount", NULL, Unmount, NULL, NULL, NULL, napi_default, NULL},
+      {"rename", NULL, Rename, NULL, NULL, NULL, napi_default, NULL},
       {"read", NULL, Read, NULL, NULL, NULL, napi_default, NULL},
       {"write", NULL, Write, NULL, NULL, NULL, napi_default, NULL},
   };
