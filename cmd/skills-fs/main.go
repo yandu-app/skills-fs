@@ -100,7 +100,7 @@ func maybeDaemonize(daemon bool, pidfile string) bool {
 	if !daemon {
 		if pidfile != "" {
 			// #nosec G306 -- PID files follow standard world-readable convention.
-		os.WriteFile(pidfile, []byte(fmt.Sprintf("%d\n", os.Getpid())), 0644)
+			os.WriteFile(pidfile, []byte(fmt.Sprintf("%d\n", os.Getpid())), 0644)
 		}
 		return false
 	}

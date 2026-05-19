@@ -2119,7 +2119,7 @@ func TestMountNilOpInMap(t *testing.T) {
 		Kind: KindAPI,
 		Mode: 0o644,
 		Ops: map[OpCode]*CapConfig{
-			OpRead: {ProviderID: "fp", Action: "test"},
+			OpRead:  {ProviderID: "fp", Action: "test"},
 			OpWrite: nil,
 		},
 	})
