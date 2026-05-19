@@ -30,6 +30,7 @@ func (g *SkillGenerator) Generate(cfg SkillConfig) error {
 		return err
 	}
 	dir := filepath.Join(g.root, cfg.Name)
+	// #nosec G301 -- skill directories are intentionally browsable.
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
@@ -71,6 +72,7 @@ func (g *SkillGenerator) Generate(cfg SkillConfig) error {
 	if body.Len() == 0 {
 		return posix(EINVAL, OpWrite, cfg.Name, nil)
 	}
+	// #nosec G306 -- skill metadata is intentionally world-readable.
 	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), body.Bytes(), 0o644); err != nil {
 		return err
 	}
