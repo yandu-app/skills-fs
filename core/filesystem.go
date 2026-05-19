@@ -508,6 +508,7 @@ func (fs *FileSystem) Read(ctx context.Context, path string, caller CallerIdenti
 			return nil, err
 		}
 		if cap.Async {
+			// #nosec G118 -- async provider call must outlive the request context.
 			go func() {
 				_, err := fs.invokeProvider(context.Background(), provider, cap, OpRead, path, params, nil, caller)
 				fs.recordBreakerResult(cap.ProviderID, err == nil)
