@@ -48,10 +48,11 @@ func (m *Metrics) record(op OpCode, started time.Time, err error) {
 	if err != nil {
 		metric.errors.Add(1)
 	}
-	ns := uint64(time.Since(started).Nanoseconds())
+	elapsed := time.Since(started)
+	ns := uint64(elapsed.Nanoseconds())
 	metric.totalNS.Add(ns)
 	for i, bound := range latencyBuckets {
-		if time.Duration(ns) <= bound {
+		if elapsed <= bound {
 			metric.buckets[i].Add(1)
 			break
 		}
