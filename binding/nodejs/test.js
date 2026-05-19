@@ -39,7 +39,7 @@ function testUnmountRemovesMount() {
     assert.strictEqual(fs.read('/tmp.txt').toString(), 'temp');
 
     fs.unmount('/tmp.txt');
-    assert.throws(() => fs.read('/tmp.txt'), /read.*failed/);
+    assert.throws(() => fs.read('/tmp.txt'), /ENOENT|not found|read\(/);
     console.log('ok  unmount removes mount');
   } finally {
     fs.shutdown();
@@ -53,7 +53,7 @@ function testRenameMovesData() {
     fs.write('/old.txt', Buffer.from('payload'));
 
     fs.rename('/old.txt', '/new.txt');
-    assert.throws(() => fs.read('/old.txt'), /read.*failed/);
+    assert.throws(() => fs.read('/old.txt'), /ENOENT|not found|read\(/);
     assert.strictEqual(fs.read('/new.txt').toString(), 'payload');
     console.log('ok  rename moves data with path');
   } finally {
@@ -91,6 +91,33 @@ function testReaddirListsBuiltinSysDir() {
   }
 }
 
+function testErrorMessagesArePropagated() {
+  const fs = new FileSystem();
+  try {
+    // Reading an unmounted path must surface the underlying core error
+    // (typically containing "ENOENT" or "not found") rather than a
+    // generic rc=-1.
+    let err;
+    try {
+      fs.read('/does-not-exist.txt');
+    } catch (e) {
+      err = e;
+    }
+    assert.ok(err instanceof Error, 'expected Error to be thrown');
+    assert.ok(
+      err.message.length > 'read(/does-not-exist.txt): rc=-1'.length,
+      `expected real error message, got: ${err.message}`,
+    );
+    assert.ok(
+      !/rc=-1$/.test(err.message),
+      `error fell back to rc=-1: ${err.message}`,
+    );
+    console.log(`ok  error messages propagated (${err.message})`);
+  } finally {
+    fs.shutdown();
+  }
+}
+
 testBlobRoundTrip();
 testShutdownIdempotent();
 testUseAfterShutdownThrows();
@@ -98,4 +125,5 @@ testUnmountRemovesMount();
 testRenameMovesData();
 testStatReportsBlobSize();
 testReaddirListsBuiltinSysDir();
+testErrorMessagesArePropagated();
 console.log('all tests passed');

@@ -32,6 +32,26 @@ static napi_value Shutdown(napi_env env, napi_callback_info info) {
   return NULL;
 }
 
+static napi_value LastError(napi_env env, napi_callback_info info) {
+  size_t argc = 1;
+  napi_value args[1];
+  NAPI_CALL(env, napi_get_cb_info(env, info, &argc, args, NULL, NULL));
+
+  bool lossless;
+  uint64_t handle;
+  NAPI_CALL(env, napi_get_value_bigint_uint64(env, args[0], &handle, &lossless));
+
+  char *msg = skills_fs_last_error((uintptr_t)handle);
+  napi_value result;
+  if (msg == NULL) {
+    NAPI_CALL(env, napi_get_undefined(env, &result));
+    return result;
+  }
+  NAPI_CALL(env, napi_create_string_utf8(env, msg, NAPI_AUTO_LENGTH, &result));
+  skills_fs_free(msg);
+  return result;
+}
+
 static napi_value MountBlob(napi_env env, napi_callback_info info) {
   size_t argc = 3;
   napi_value args[3];
@@ -201,6 +221,7 @@ static napi_value Init(napi_env env, napi_value exports) {
   napi_property_descriptor descs[] = {
       {"createFS", NULL, CreateFS, NULL, NULL, NULL, napi_default, NULL},
       {"shutdown", NULL, Shutdown, NULL, NULL, NULL, napi_default, NULL},
+      {"lastError", NULL, LastError, NULL, NULL, NULL, napi_default, NULL},
       {"mountBlob", NULL, MountBlob, NULL, NULL, NULL, napi_default, NULL},
       {"unmount", NULL, Unmount, NULL, NULL, NULL, napi_default, NULL},
       {"rename", NULL, Rename, NULL, NULL, NULL, napi_default, NULL},
