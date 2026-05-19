@@ -50,3 +50,7 @@ binding/nodejs/node_modules/
 binding/nodejs/build/
 binding/nodejs/lib/
 binding/nodejs/package-lock.json
+
+# Python binding build artifacts
+binding/python/lib/
+binding/python/__pycache__/
