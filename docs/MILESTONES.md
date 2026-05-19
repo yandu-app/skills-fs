@@ -44,5 +44,15 @@ Status: complete.
 - Node N-API binding.
 - IPC provider bridge.
 - Lifecycle cleanup hooks.
+- Python ctypes binding.
+
+Status: complete.
+
+## M5 Cross-platform Validation and Benchmark Gates
+
+- Cross-platform build verification (linux, darwin, windows).
+- Native test execution on macOS and Windows runners.
+- Benchmark smoke test to catch panics.
+- Statistical benchmark comparison (benchstat) on pull requests.
 
 Status: complete.
