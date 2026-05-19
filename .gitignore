@@ -54,3 +54,6 @@ binding/nodejs/package-lock.json
 # Python binding build artifacts
 binding/python/lib/
 binding/python/__pycache__/
+
+# Local benchmark baselines (generated on demand)
+bench/baseline.txt
