@@ -2052,3 +2052,86 @@ func TestOnShutdownHooksClearedAfterRun(t *testing.T) {
 		t.Fatalf("expected hook to run once, got %d", calls)
 	}
 }
+
+func TestNewFSPanicsOnInvalidConfig(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic for invalid config")
+		}
+	}()
+	_ = NewFS(GlobalConfig{MaxOpenHandles: -1})
+}
+
+func TestResolveParamsErrors(t *testing.T) {
+	fs := NewFS(GlobalConfig{})
+
+	// Unmatched path.
+	_, _, err := fs.ResolveParams("/missing")
+	if !IsCode(err, ENOENT) {
+		t.Fatalf("expected ENOENT, got %v", err)
+	}
+
+	// Invalid path format.
+	_, _, err = fs.ResolveParams("bad-path")
+	if err == nil {
+		t.Fatal("expected error for invalid path")
+	}
+}
+
+func TestRestoreReturnsFirstError(t *testing.T) {
+	fs := NewFS(GlobalConfig{})
+	if err := fs.Restore([]MountEntry{
+		{Path: "no-leading-slash", Kind: KindBlob, Mode: 0o644},
+	}); err == nil {
+		t.Fatal("expected error for invalid mount entry")
+	}
+}
+
+func TestReadLinkInvalidPath(t *testing.T) {
+	fs := NewFS(GlobalConfig{})
+	_, err := fs.ReadLink("relative-path")
+	if err == nil {
+		t.Fatal("expected error for invalid path")
+	}
+}
+
+func TestMountAPIWithoutProviders(t *testing.T) {
+	fs := NewFS(GlobalConfig{})
+	err := fs.Mount("/api", MountEntry{
+		Kind: KindAPI,
+		Mode: 0o644,
+		Ops: map[OpCode]*CapConfig{
+			OpRead: {ProviderID: "missing", Action: "test"},
+		},
+	})
+	if !IsCode(err, EINVAL) {
+		t.Fatalf("expected EINVAL, got %v", err)
+	}
+}
+
+func TestMountNilOpInMap(t *testing.T) {
+	fs := NewFS(GlobalConfig{})
+	p := &fakeProvider{id: "fp"}
+	if err := fs.RegisterProvider(p); err != nil {
+		t.Fatal(err)
+	}
+	err := fs.Mount("/api", MountEntry{
+		Kind: KindAPI,
+		Mode: 0o644,
+		Ops: map[OpCode]*CapConfig{
+			OpRead: {ProviderID: "fp", Action: "test"},
+			OpWrite: nil,
+		},
+	})
+	if !IsCode(err, EINVAL) {
+		t.Fatalf("expected EINVAL, got %v", err)
+	}
+}
+
+func TestFollowLinkMissingPath(t *testing.T) {
+	fs := NewFS(GlobalConfig{})
+	_, err := fs.FollowLink("/missing")
+	if !IsCode(err, ENOENT) {
+		t.Fatalf("expected ENOENT, got %v", err)
+	}
+}
