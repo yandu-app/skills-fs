@@ -380,6 +380,7 @@ func (fh *fileHandle) Write(ctx context.Context, data []byte, off int64) (uint32
 	if err != nil {
 		return 0, toErrno(err)
 	}
+	// #nosec G115 -- FUSE write size is bounded by the protocol (≤128 KiB).
 	return uint32(len(data)), fs.OK
 }
 
@@ -406,6 +407,7 @@ func fillAttrOut(out *fuse.AttrOut, st core.Stat) {
 	out.Mode = fileMode(st)
 	out.Uid = st.UID
 	out.Gid = st.GID
+	// #nosec G115 -- file sizes in core are always non-negative.
 	out.Size = uint64(st.Size)
 }
 
@@ -413,6 +415,7 @@ func fillEntryOut(out *fuse.EntryOut, st core.Stat) {
 	out.Mode = fileMode(st)
 	out.Uid = st.UID
 	out.Gid = st.GID
+	// #nosec G115 -- file sizes in core are always non-negative.
 	out.Size = uint64(st.Size)
 }
 
