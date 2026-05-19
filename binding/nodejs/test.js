@@ -61,9 +61,41 @@ function testRenameMovesData() {
   }
 }
 
+function testStatReportsBlobSize() {
+  const fs = new FileSystem();
+  try {
+    fs.mountBlob('/info.txt', 0o600);
+    fs.write('/info.txt', Buffer.from('twelve chars'));
+
+    const st = fs.stat('/info.txt');
+    assert.strictEqual(st.path, '/info.txt');
+    assert.strictEqual(st.kind, 'blob');
+    assert.strictEqual(st.mode, 0o600);
+    assert.strictEqual(st.size, 12);
+    console.log('ok  stat reports kind, mode, size');
+  } finally {
+    fs.shutdown();
+  }
+}
+
+function testReaddirListsBuiltinSysDir() {
+  const fs = new FileSystem();
+  try {
+    const entries = fs.readdir('/sys');
+    assert.ok(Array.isArray(entries), 'readdir must return Array');
+    const names = entries.map((e) => e.name);
+    assert.ok(names.includes('metrics'), `/sys should expose metrics, got ${names}`);
+    console.log('ok  readdir lists /sys built-in entries');
+  } finally {
+    fs.shutdown();
+  }
+}
+
 testBlobRoundTrip();
 testShutdownIdempotent();
 testUseAfterShutdownThrows();
 testUnmountRemovesMount();
 testRenameMovesData();
+testStatReportsBlobSize();
+testReaddirListsBuiltinSysDir();
 console.log('all tests passed');

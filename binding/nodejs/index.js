@@ -50,6 +50,24 @@ class FileSystem {
     }
   }
 
+  stat(path) {
+    this._assertOpen();
+    const json = addon.stat(this._handle, path);
+    if (json === undefined) {
+      throw new Error(`stat(${path}) failed`);
+    }
+    return JSON.parse(json);
+  }
+
+  readdir(path) {
+    this._assertOpen();
+    const json = addon.readdir(this._handle, path);
+    if (json === undefined) {
+      throw new Error(`readdir(${path}) failed`);
+    }
+    return JSON.parse(json);
+  }
+
   shutdown() {
     if (this._closed) return;
     addon.shutdown(this._handle);

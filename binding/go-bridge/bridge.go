@@ -18,6 +18,7 @@ import "C"
 
 import (
 	"context"
+	"encoding/json"
 	"unsafe"
 
 	"github.com/skills-fs/skills-fs/binding/registry"
@@ -25,6 +26,24 @@ import (
 )
 
 var reg = registry.New()
+
+// statDTO and dirEntryDTO are the cross-FFI shapes for filesystem
+// metadata. They are local to the binding so core types are free to
+// evolve without breaking JS/Python clients.
+type statDTO struct {
+	Path string `json:"path"`
+	Kind string `json:"kind"`
+	Mode uint32 `json:"mode"`
+	UID  uint32 `json:"uid"`
+	GID  uint32 `json:"gid"`
+	Size int64  `json:"size"`
+}
+
+type dirEntryDTO struct {
+	Name string `json:"name"`
+	Kind string `json:"kind"`
+	Mode uint32 `json:"mode"`
+}
 
 //export skills_fs_create
 func skills_fs_create() C.uintptr_t {
@@ -91,6 +110,53 @@ func skills_fs_rename(handle C.uintptr_t, oldPath *C.char, newPath *C.char) C.in
 		return -1
 	}
 	return 0
+}
+
+//export skills_fs_stat
+func skills_fs_stat(handle C.uintptr_t, path *C.char, outLen *C.int) *C.char {
+	fs, ok := reg.Get(uintptr(handle))
+	if !ok {
+		return nil
+	}
+	st, err := fs.Stat(C.GoString(path), core.CallerIdentity{})
+	if err != nil {
+		return nil
+	}
+	payload, err := json.Marshal(statDTO{
+		Path: st.Path,
+		Kind: string(st.Kind),
+		Mode: st.Mode,
+		UID:  st.UID,
+		GID:  st.GID,
+		Size: st.Size,
+	})
+	if err != nil {
+		return nil
+	}
+	*outLen = C.int(len(payload))
+	return (*C.char)(C.CBytes(payload))
+}
+
+//export skills_fs_readdir
+func skills_fs_readdir(handle C.uintptr_t, path *C.char, outLen *C.int) *C.char {
+	fs, ok := reg.Get(uintptr(handle))
+	if !ok {
+		return nil
+	}
+	entries, err := fs.Readdir(C.GoString(path), core.CallerIdentity{})
+	if err != nil {
+		return nil
+	}
+	dtos := make([]dirEntryDTO, len(entries))
+	for i, e := range entries {
+		dtos[i] = dirEntryDTO{Name: e.Name, Kind: string(e.Kind), Mode: e.Mode}
+	}
+	payload, err := json.Marshal(dtos)
+	if err != nil {
+		return nil
+	}
+	*outLen = C.int(len(payload))
+	return (*C.char)(C.CBytes(payload))
 }
 
 //export skills_fs_read
