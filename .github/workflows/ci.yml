@@ -73,6 +73,19 @@ jobs:
           go-version: "1.25.x"
       - run: GOOS=${{ matrix.goos }} go build ./...
 
+  test-cross:
+    name: Cross-platform test
+    strategy:
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.x"
+      - run: go test ./... -count=1
+
   binding:
     name: Node N-API binding
     runs-on: ubuntu-latest
