@@ -3,6 +3,7 @@ package core
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -52,5 +53,99 @@ func TestSkillGeneratorRemoveErrors(t *testing.T) {
 	defer os.Chmod(skillDir, 0o755) // ensure cleanup succeeds
 	if err := gen2.Remove("test-skill"); err == nil {
 		t.Fatal("expected error when directory is unwritable")
+	}
+}
+
+func TestSkillListEmpty(t *testing.T) {
+	gen := NewSkillGenerator(t.TempDir())
+	if got := gen.List(); len(got) != 0 {
+		t.Fatalf("expected empty list, got %v", got)
+	}
+}
+
+func TestValidateSkillConfigDisabled(t *testing.T) {
+	if err := validateSkillConfig(SkillConfig{Enabled: false}); err != nil {
+		t.Fatalf("expected nil for disabled skill, got %v", err)
+	}
+}
+
+func TestValidateSkillConfigDescriptionTooLong(t *testing.T) {
+	cfg := SkillConfig{
+		Name:        "test-skill",
+		Description: string(make([]byte, 1025)),
+		Enabled:     true,
+	}
+	if err := validateSkillConfig(cfg); !IsCode(err, EINVAL) {
+		t.Fatalf("expected EINVAL, got %v", err)
+	}
+}
+
+func TestValidateSkillConfigCompatibilityTooLong(t *testing.T) {
+	cfg := SkillConfig{
+		Name:          "test-skill",
+		Description:   "ok",
+		Compatibility: string(make([]byte, 501)),
+		Enabled:       true,
+	}
+	if err := validateSkillConfig(cfg); !IsCode(err, EINVAL) {
+		t.Fatalf("expected EINVAL, got %v", err)
+	}
+}
+
+func TestSkillListNonEmpty(t *testing.T) {
+	gen := NewSkillGenerator(t.TempDir())
+	if err := gen.Generate(SkillConfig{
+		Name:        "alpha",
+		Description: "first",
+		Enabled:     true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := gen.Generate(SkillConfig{
+		Name:        "beta",
+		Description: "second",
+		Enabled:     true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	list := gen.List()
+	if len(list) != 2 {
+		t.Fatalf("expected 2 skills, got %d", len(list))
+	}
+	if list[0].Name != "alpha" || list[1].Name != "beta" {
+		t.Fatalf("unexpected order: %v", list)
+	}
+}
+
+func TestSkillGenerateWithOptionalFields(t *testing.T) {
+	gen := NewSkillGenerator(t.TempDir())
+	cfg := SkillConfig{
+		Name:          "full",
+		Description:   "all fields",
+		License:       "MIT",
+		Compatibility: "go1.25",
+		AllowedTools:  []string{"tool-a", "tool-b"},
+		Metadata:      map[string]string{"key": "value"},
+		Enabled:       true,
+	}
+	if err := gen.Generate(cfg); err != nil {
+		t.Fatal(err)
+	}
+	data, err := gen.ReadSkillFile("full")
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "license: MIT") {
+		t.Fatal("missing license in output")
+	}
+	if !strings.Contains(content, "compatibility: go1.25") {
+		t.Fatal("missing compatibility in output")
+	}
+	if !strings.Contains(content, "allowed-tools:") {
+		t.Fatal("missing allowed-tools in output")
+	}
+	if !strings.Contains(content, "metadata:") {
+		t.Fatal("missing metadata in output")
 	}
 }
