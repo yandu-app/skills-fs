@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 )
@@ -404,5 +405,41 @@ func TestFlushPrefixLockedWriteError(t *testing.T) {
 	}
 	if err := h.Flush(context.Background()); !IsCode(err, ENOENT) {
 		t.Fatalf("expected ENOENT on flush after unmount, got %v", err)
+	}
+}
+
+func TestHandleManagerAcquireContention(t *testing.T) {
+	// Use max=1 with many synchronized goroutines to maximize the chance
+	// of CAS failure in the acquire loop, exercising the retry path.
+	m := newHandleManager(1)
+	var ready sync.WaitGroup
+	var start sync.WaitGroup
+	var done sync.WaitGroup
+	ready.Add(500)
+	start.Add(1)
+	acquired := 0
+	var mu sync.Mutex
+	for i := 0; i < 500; i++ {
+		done.Add(1)
+		go func() {
+			defer done.Done()
+			ready.Done()
+			start.Wait()
+			id, err := m.acquire()
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			acquired++
+			mu.Unlock()
+			m.put(&Handle{id: id})
+			m.drop(id)
+		}()
+	}
+	ready.Wait()
+	start.Done()
+	done.Wait()
+	if acquired == 0 {
+		t.Fatal("expected at least one successful acquisition")
 	}
 }

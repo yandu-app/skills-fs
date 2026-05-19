@@ -85,3 +85,11 @@ func TestFlockDeadlineTimeout(t *testing.T) {
 		t.Fatalf("expected ETIMEDOUT on deadline, got %v", err)
 	}
 }
+
+func TestLockManagerInspectEmpty(t *testing.T) {
+	lm := newLockManager(0)
+	shared, hasExcl := lm.inspect("/no-locks")
+	if shared != 0 || hasExcl {
+		t.Fatalf("expected (0, false), got (%d, %v)", shared, hasExcl)
+	}
+}
