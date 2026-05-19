@@ -193,6 +193,7 @@ func simulateServerRestarts(ctx context.Context, server *wsadapter.Server, fs *c
 			fmt.Println("[simulator] restarting server...")
 			server.Unmount(context.Background())
 			// Small jitter to exercise backoff.
+			// #nosec G404 -- math/rand is sufficient for simulator jitter.
 			time.Sleep(time.Duration(rand.Intn(500)+200) * time.Millisecond)
 			if err := server.Mount(context.Background()); err != nil {
 				log.Println("remount err:", err)

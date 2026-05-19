@@ -54,6 +54,7 @@ func (p *Provider) Invoke(ctx context.Context, action string, params map[string]
 	for attempt := 0; attempt <= p.retryCount; attempt++ {
 		if attempt > 0 {
 			delay := p.retryBaseDelay * time.Duration(1<<uint(attempt-1))
+			// #nosec G404 -- math/rand is sufficient for retry jitter.
 			delay += time.Duration(rand.Int63n(int64(delay) / 2))
 			select {
 			case <-time.After(delay):
