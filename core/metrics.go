@@ -49,6 +49,7 @@ func (m *Metrics) record(op OpCode, started time.Time, err error) {
 		metric.errors.Add(1)
 	}
 	elapsed := time.Since(started)
+	// #nosec G115 -- elapsed time is always non-negative.
 	ns := uint64(elapsed.Nanoseconds())
 	metric.totalNS.Add(ns)
 	for i, bound := range latencyBuckets {
