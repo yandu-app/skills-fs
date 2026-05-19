@@ -74,6 +74,33 @@ static napi_value MountBlob(napi_env env, napi_callback_info info) {
   return result;
 }
 
+static napi_value MountApi(napi_env env, napi_callback_info info) {
+  size_t argc = 4;
+  napi_value args[4];
+  NAPI_CALL(env, napi_get_cb_info(env, info, &argc, args, NULL, NULL));
+
+  bool lossless;
+  uint64_t handle;
+  NAPI_CALL(env, napi_get_value_bigint_uint64(env, args[0], &handle, &lossless));
+
+  size_t path_len;
+  char path_buf[4096];
+  NAPI_CALL(env, napi_get_value_string_utf8(env, args[1], path_buf, sizeof(path_buf), &path_len));
+
+  size_t provider_len;
+  char provider_buf[4096];
+  NAPI_CALL(env, napi_get_value_string_utf8(env, args[2], provider_buf, sizeof(provider_buf), &provider_len));
+
+  size_t action_len;
+  char action_buf[4096];
+  NAPI_CALL(env, napi_get_value_string_utf8(env, args[3], action_buf, sizeof(action_buf), &action_len));
+
+  int rc = skills_fs_mount_api((uintptr_t)handle, path_buf, provider_buf, action_buf);
+  napi_value result;
+  NAPI_CALL(env, napi_create_int32(env, rc, &result));
+  return result;
+}
+
 static napi_value Read(napi_env env, napi_callback_info info) {
   size_t argc = 2;
   napi_value args[2];
@@ -223,6 +250,7 @@ static napi_value Init(napi_env env, napi_value exports) {
       {"shutdown", NULL, Shutdown, NULL, NULL, NULL, napi_default, NULL},
       {"lastError", NULL, LastError, NULL, NULL, NULL, napi_default, NULL},
       {"mountBlob", NULL, MountBlob, NULL, NULL, NULL, napi_default, NULL},
+      {"mountApi", NULL, MountApi, NULL, NULL, NULL, napi_default, NULL},
       {"unmount", NULL, Unmount, NULL, NULL, NULL, napi_default, NULL},
       {"rename", NULL, Rename, NULL, NULL, NULL, napi_default, NULL},
       {"stat", NULL, Stat, NULL, NULL, NULL, napi_default, NULL},
