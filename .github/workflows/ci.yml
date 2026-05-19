@@ -85,7 +85,9 @@ jobs:
           cd pr
           go test ./bench -bench . -benchmem -count=3 -benchtime=500ms > /tmp/bench-pr.txt
       - name: Compare
-        run: benchstat /tmp/bench-base.txt /tmp/bench-pr.txt
+        run: |
+          benchstat /tmp/bench-base.txt /tmp/bench-pr.txt
+          python3 pr/scripts/check_benchmarks.py /tmp/bench-base.txt /tmp/bench-pr.txt
 
   build-cross:
     name: Cross-platform build
