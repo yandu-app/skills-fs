@@ -147,6 +147,56 @@ static napi_value Rename(napi_env env, napi_callback_info info) {
   return result;
 }
 
+static napi_value Stat(napi_env env, napi_callback_info info) {
+  size_t argc = 2;
+  napi_value args[2];
+  NAPI_CALL(env, napi_get_cb_info(env, info, &argc, args, NULL, NULL));
+
+  bool lossless;
+  uint64_t handle;
+  NAPI_CALL(env, napi_get_value_bigint_uint64(env, args[0], &handle, &lossless));
+
+  size_t path_len;
+  char path_buf[4096];
+  NAPI_CALL(env, napi_get_value_string_utf8(env, args[1], path_buf, sizeof(path_buf), &path_len));
+
+  int out_len = 0;
+  char *data = skills_fs_stat((uintptr_t)handle, path_buf, &out_len);
+  napi_value result;
+  if (data == NULL) {
+    NAPI_CALL(env, napi_get_undefined(env, &result));
+    return result;
+  }
+  NAPI_CALL(env, napi_create_string_utf8(env, data, out_len, &result));
+  skills_fs_free(data);
+  return result;
+}
+
+static napi_value Readdir(napi_env env, napi_callback_info info) {
+  size_t argc = 2;
+  napi_value args[2];
+  NAPI_CALL(env, napi_get_cb_info(env, info, &argc, args, NULL, NULL));
+
+  bool lossless;
+  uint64_t handle;
+  NAPI_CALL(env, napi_get_value_bigint_uint64(env, args[0], &handle, &lossless));
+
+  size_t path_len;
+  char path_buf[4096];
+  NAPI_CALL(env, napi_get_value_string_utf8(env, args[1], path_buf, sizeof(path_buf), &path_len));
+
+  int out_len = 0;
+  char *data = skills_fs_readdir((uintptr_t)handle, path_buf, &out_len);
+  napi_value result;
+  if (data == NULL) {
+    NAPI_CALL(env, napi_get_undefined(env, &result));
+    return result;
+  }
+  NAPI_CALL(env, napi_create_string_utf8(env, data, out_len, &result));
+  skills_fs_free(data);
+  return result;
+}
+
 static napi_value Init(napi_env env, napi_value exports) {
   napi_property_descriptor descs[] = {
       {"createFS", NULL, CreateFS, NULL, NULL, NULL, napi_default, NULL},
@@ -154,6 +204,8 @@ static napi_value Init(napi_env env, napi_value exports) {
       {"mountBlob", NULL, MountBlob, NULL, NULL, NULL, napi_default, NULL},
       {"unmount", NULL, Unmount, NULL, NULL, NULL, napi_default, NULL},
       {"rename", NULL, Rename, NULL, NULL, NULL, napi_default, NULL},
+      {"stat", NULL, Stat, NULL, NULL, NULL, napi_default, NULL},
+      {"readdir", NULL, Readdir, NULL, NULL, NULL, napi_default, NULL},
       {"read", NULL, Read, NULL, NULL, NULL, napi_default, NULL},
       {"write", NULL, Write, NULL, NULL, NULL, napi_default, NULL},
   };
