@@ -16,6 +16,14 @@ class FileSystem {
     );
   }
 
+  mountApi(path, providerID, action) {
+    this._assertOpen();
+    this._check(
+      addon.mountApi(this._handle, path, providerID, action),
+      `mountApi(${path})`,
+    );
+  }
+
   unmount(path) {
     this._assertOpen();
     this._check(addon.unmount(this._handle, path), `unmount(${path})`);

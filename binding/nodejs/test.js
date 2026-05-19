@@ -91,6 +91,21 @@ function testReaddirListsBuiltinSysDir() {
   }
 }
 
+function testMountApiRejectsMissingProvider() {
+  const fs = new FileSystem();
+  try {
+    // Mounting an API node without a registered provider must fail
+    // with a real error message (not just rc=-1).
+    assert.throws(
+      () => fs.mountApi('/api/greet', 'greet-provider', 'sayHello'),
+      /EINVAL|provider|not found/,
+    );
+    console.log('ok  mount_api rejects missing provider');
+  } finally {
+    fs.shutdown();
+  }
+}
+
 function testErrorMessagesArePropagated() {
   const fs = new FileSystem();
   try {
@@ -125,5 +140,6 @@ testUnmountRemovesMount();
 testRenameMovesData();
 testStatReportsBlobSize();
 testReaddirListsBuiltinSysDir();
+testMountApiRejectsMissingProvider();
 testErrorMessagesArePropagated();
 console.log('all tests passed');
