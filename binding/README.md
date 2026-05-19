@@ -1,10 +1,10 @@
 # Host language bindings
 
 The `binding/` tree exposes the in-process `core.FileSystem` to other
-languages by way of a C shared library generated from Go. Today the only
-implemented binding is for Node.js, but the same `libgobridge.so` is the
-intended ABI for Python (ctypes), Ruby (FFI), or any other runtime that
-can speak C.
+languages by way of a C shared library generated from Go. Implemented
+bindings are Node.js (N-API) and Python (ctypes). The same
+`libgobridge.so` is the intended ABI for Ruby (FFI), Rust, or any other
+runtime that can speak C.
 
 ```
        Node.js  Python  Ruby ...
@@ -25,12 +25,15 @@ can speak C.
 binding/
 ├── go-bridge/        cgo c-shared package; emits libgobridge.{so,h}
 │   └── bridge.go
-└── nodejs/           node-gyp project that wraps the C ABI as N-API
-    ├── binding.c     N-API → libgobridge translation
-    ├── binding.gyp   build config
-    ├── index.js      ergonomic JS wrapper
-    ├── test.js       smoke test
-    └── package.json
+├── nodejs/           node-gyp project that wraps the C ABI as N-API
+│   ├── binding.c     N-API → libgobridge translation
+│   ├── binding.gyp   build config
+│   ├── index.js      ergonomic JS wrapper
+│   ├── test.js       smoke test
+│   └── package.json
+└── python/           ctypes module that loads the same C ABI
+    ├── skills_fs.py  Python wrapper
+    └── test_skills_fs.py
 ```
 
 ## C ABI
@@ -85,6 +88,25 @@ fs.mountBlob('/greeting.txt');
 fs.write('/greeting.txt', Buffer.from('hello'));
 console.log(fs.read('/greeting.txt').toString()); // hello
 fs.shutdown();
+```
+
+## Usage from Python
+
+From the repo root:
+
+```sh
+make binding-python
+cd binding/python && python3 test_skills_fs.py
+```
+
+```python
+from skills_fs import FileSystem
+
+fs = FileSystem()
+fs.mount_blob("/greeting.txt")
+fs.write("/greeting.txt", b"hello")
+print(fs.read("/greeting.txt"))  # b'hello'
+fs.shutdown()
 ```
 
 ## Caveats
