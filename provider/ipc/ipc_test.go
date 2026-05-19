@@ -8,6 +8,19 @@ import (
 	"time"
 )
 
+func TestIPCProviderWithEnvAndDir(t *testing.T) {
+	p := NewProvider("ipc-cfg", "sh", "-c", "echo ok").
+		WithEnv([]string{"EXTRA=val"}).
+		WithDir("/")
+
+	if p.env[0] != "EXTRA=val" {
+		t.Fatalf("unexpected env %v", p.env)
+	}
+	if p.dir != "/" {
+		t.Fatalf("unexpected dir %q", p.dir)
+	}
+}
+
 func TestIPCProviderInvokeSuccess(t *testing.T) {
 	// Subprocess that echoes a valid JSON response with base64-encoded data.
 	resp := ipcResponse{Data: []byte("hello-ipc"), ContentType: "text/plain"}
@@ -75,6 +88,45 @@ func TestIPCProviderID(t *testing.T) {
 	p := NewProvider("my-id", "sh")
 	if p.ID() != "my-id" {
 		t.Fatalf("expected ID my-id, got %s", p.ID())
+	}
+}
+
+func TestIPCProviderInvokeContextCancellation(t *testing.T) {
+	p := NewProvider("ipc-cancel", "sh", "-c", "sleep 10")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := p.Invoke(ctx, "x", nil)
+		done <- err
+	}()
+
+	// Give the subprocess time to start before cancelling.
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected cancellation error")
+		}
+		if err != context.Canceled {
+			t.Fatalf("expected context.Canceled, got %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Invoke did not return after cancellation")
+	}
+}
+
+func TestIPCProviderInvokeCommandNotFound(t *testing.T) {
+	p := NewProvider("ipc-missing", "/nonexistent-binary-that-does-not-exist")
+
+	_, err := p.Invoke(context.Background(), "x", nil)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if err == context.DeadlineExceeded {
+		t.Fatal("expected non-deadline error")
 	}
 }
 
