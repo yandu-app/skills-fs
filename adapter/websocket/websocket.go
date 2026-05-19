@@ -62,7 +62,7 @@ func (s *Server) Mount(ctx context.Context) error {
 		handler = middleware.ConnLimit(cl)(handler)
 	}
 
-	s.srv = &http.Server{Addr: s.addr, Handler: handler}
+	s.srv = &http.Server{Addr: s.addr, Handler: handler, ReadHeaderTimeout: 10 * time.Second}
 	ln, err := net.Listen("tcp", s.addr)
 	if err != nil {
 		return err
