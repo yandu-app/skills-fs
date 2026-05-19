@@ -33,5 +33,11 @@ Host bindings own only:
 - `adapter/webdav`: Full WebDAV server with GET, PUT, PROPFIND, COPY, MOVE, LOCK, and streaming binary support.
 - `adapter/websocket`: WebSocket streaming adapter with JSON protocol, binary messages, per-message deflate, and event subscriptions.
 - `adapter/middleware`: Shared HTTP middleware for request IDs, CORS, rate limiting, connection limiting, gzip, and size limits.
+- `provider/cache`, `provider/http`, `provider/ipc`, `provider/local`: built-in provider implementations.
+- `binding/go-bridge`: cgo shared library that exposes core.FileSystem through a C ABI for language bindings.
+- `binding/registry`: handle-to-FS registry and per-handle last-error storage used by the C bridge.
+- `binding/nodejs`: Node.js N-API wrapper consuming `libgobridge.so`.
+- `binding/python`: Python ctypes wrapper consuming `libgobridge.so`.
+- `cmd/skills-fs`: CLI daemon with config reload, PID file, and graceful shutdown.
 - `bench`: required benchmark entry points.
 - `docs`: handoff, architecture, testing, and milestone documents.
