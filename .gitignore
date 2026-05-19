@@ -30,6 +30,7 @@ go.work.sum
 /websocket-events
 /websocket-reconnect
 /basic
+/go-bridge
 
 # env file
 .env
