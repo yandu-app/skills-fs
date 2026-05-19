@@ -39,6 +39,9 @@ Benchmarks are tracked in `bench/`:
 - `BenchmarkSerialQueue`: throughput under parallel API writes.
 - `BenchmarkLockAcquire`: uncontended lock latency.
 - `BenchmarkLockContention1000`: shared lock scaling with 1000 handles.
+- `BenchmarkStreamWriteDrop`: write throughput to a drop-mode stream buffer.
+- `BenchmarkStreamReadWrite`: paired reader/writer through a block-mode stream.
+- `BenchmarkEventEmit`: event delivery to 1, 4, and 16 registered listeners.
 
 Run:
 
@@ -48,15 +51,38 @@ make bench
 
 Current baseline on Linux amd64:
 
-- `BenchmarkPathResolveStatic`: about `56 ns/op`, `0 allocs/op`.
-- `BenchmarkPathResolveParam`: about `169 ns/op`.
-- `BenchmarkStatCacheHit`: about `23 ns/op`, `0 allocs/op`.
-- `BenchmarkWriteImmediate`: about `34 ns/op`, `0 allocs/op` for blob overwrite core path.
-- `BenchmarkSkillGenerate`: about `6.3 ms/op`.
+- `BenchmarkPathResolveStatic`: about `80 ns/op`, `0 allocs/op`.
+- `BenchmarkPathResolveParam`: about `92 ns/op`.
+- `BenchmarkStatCacheHit`: about `140 ns/op`, `0 allocs/op`.
+- `BenchmarkWriteImmediate`: about `210 ns/op`, `0 allocs/op` for blob overwrite core path.
+- `BenchmarkSkillGenerate`: about `6.4 ms/op`.
+- `BenchmarkStreamWriteDrop`: about `350 ns/op`, `0 allocs/op`.
+- `BenchmarkStreamReadWrite`: about `220 ns/op`, `1 B/op`, `0 allocs/op`.
+- `BenchmarkEventEmit/listeners=1`: about `730 ns/op`, `7 allocs/op`.
 
 ## Integration Tests
 
 FUSE tests must be opt-in and platform tagged because they require system drivers and mount privileges. They must verify real `ls`, `cat`, `grep`, `find`, and native watch events.
+
+## Binding Tests
+
+Node N-API and Python ctypes bindings are tested against `libgobridge.so`:
+
+```sh
+make binding-test
+```
+
+Tests verify round-trip mount/read/write, error propagation, and lifecycle semantics.
+
+## CI Pipeline
+
+The full pipeline is simulated locally with:
+
+```sh
+make ci
+```
+
+This runs: fmt-check, lint, test, coverage gate (85%), race detector, vulnerability scan, and benchmark smoke.
 
 To run FUSE integration tests on Linux:
 
