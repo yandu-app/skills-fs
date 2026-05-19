@@ -43,3 +43,9 @@ go.work.sum
 # OS
 .DS_Store
 Thumbs.db
+
+# Node.js binding build artifacts
+binding/nodejs/node_modules/
+binding/nodejs/build/
+binding/nodejs/lib/
+binding/nodejs/package-lock.json
