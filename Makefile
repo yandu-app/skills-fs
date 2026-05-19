@@ -1,4 +1,4 @@
-.PHONY: all test coverage coverage-all race bench build gen-docs lint vulncheck clean fmt fmt-check binding-go binding-node
+.PHONY: all test coverage coverage-all race bench build gen-docs lint vulncheck clean fmt fmt-check binding-go binding-node binding-python
 
 GOCACHE ?= /tmp/skills-fs-gocache
 
@@ -57,6 +57,8 @@ fmt-check:
 clean:
 	rm -f skills-fs webdav-server websocket-events websocket-reconnect basic coverage.out
 	rm -rf binding/nodejs/lib binding/nodejs/build
+	rm -rf binding/python/lib
+	rm -rf binding/python/__pycache__
 
 binding-go:
 	@mkdir -p binding/nodejs/lib
@@ -66,3 +68,10 @@ binding-go:
 
 binding-node: binding-go
 	cd binding/nodejs && npm install --no-audit --no-fund && npm run build
+
+binding-python:
+	@mkdir -p binding/python/lib
+	go build -buildmode=c-shared \
+		-o binding/python/lib/libgobridge.so \
+		./binding/go-bridge
+	@echo "Python module ready.  cd binding/python && python3 test_skills_fs.py"
