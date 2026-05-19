@@ -2128,6 +2128,21 @@ func TestMountNilOpInMap(t *testing.T) {
 	}
 }
 
+func TestHandleReadAllWithoutOpenRead(t *testing.T) {
+	fs := NewFS(GlobalConfig{})
+	if err := fs.Mount("/blob", MountEntry{Kind: KindBlob, Mode: 0o666, BlobData: []byte("x")}); err != nil {
+		t.Fatal(err)
+	}
+	h, err := fs.Open("/blob", OpenWrite, CallerIdentity{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Close(context.Background())
+	if _, err := h.ReadAll(context.Background()); !IsCode(err, EACCES) {
+		t.Fatalf("expected EACCES, got %v", err)
+	}
+}
+
 func TestFollowLinkMissingPath(t *testing.T) {
 	fs := NewFS(GlobalConfig{})
 	_, err := fs.FollowLink("/missing")
