@@ -2,6 +2,9 @@
 // around skills-fs core.FileSystem. It is consumed by language bindings
 // (Node N-API, Python ctypes, etc.).
 //
+// All exported functions are thin glue: they translate C types to Go
+// types and delegate to the binding/registry and core packages.
+//
 // Build with:
 //
 //	go build -buildmode=c-shared -o libgobridge.so
@@ -15,43 +18,29 @@ import "C"
 
 import (
 	"context"
-	"sync"
 	"unsafe"
 
+	"github.com/skills-fs/skills-fs/binding/registry"
 	"github.com/skills-fs/skills-fs/core"
 )
 
-var (
-	fsRegistry = make(map[uintptr]*core.FileSystem)
-	fsCounter  uintptr
-	fsMu       sync.Mutex
-)
+var reg = registry.New()
 
 //export skills_fs_create
 func skills_fs_create() C.uintptr_t {
-	fsMu.Lock()
-	defer fsMu.Unlock()
-	fsCounter++
-	id := fsCounter
-	fsRegistry[id] = core.NewFS(core.GlobalConfig{})
-	return C.uintptr_t(id)
+	return C.uintptr_t(reg.Register(core.NewFS(core.GlobalConfig{})))
 }
 
 //export skills_fs_shutdown
 func skills_fs_shutdown(handle C.uintptr_t) {
-	fsMu.Lock()
-	defer fsMu.Unlock()
-	if fs, ok := fsRegistry[uintptr(handle)]; ok {
+	if fs, ok := reg.Unregister(uintptr(handle)); ok {
 		_ = fs.Shutdown(context.Background())
-		delete(fsRegistry, uintptr(handle))
 	}
 }
 
 //export skills_fs_mount_blob
 func skills_fs_mount_blob(handle C.uintptr_t, path *C.char, mode C.uint) C.int {
-	fsMu.Lock()
-	fs, ok := fsRegistry[uintptr(handle)]
-	fsMu.Unlock()
+	fs, ok := reg.Get(uintptr(handle))
 	if !ok {
 		return -1
 	}
@@ -63,19 +52,18 @@ func skills_fs_mount_blob(handle C.uintptr_t, path *C.char, mode C.uint) C.int {
 
 //export skills_fs_mount_api
 func skills_fs_mount_api(handle C.uintptr_t, path *C.char, providerID *C.char, action *C.char) C.int {
-	fsMu.Lock()
-	fs, ok := fsRegistry[uintptr(handle)]
-	fsMu.Unlock()
+	fs, ok := reg.Get(uintptr(handle))
 	if !ok {
 		return -1
 	}
-	if err := fs.Mount(C.GoString(path), core.MountEntry{
+	entry := core.MountEntry{
 		Kind: core.KindAPI,
 		Mode: 0o644,
 		Ops: map[core.OpCode]*core.CapConfig{
 			core.OpRead: {ProviderID: C.GoString(providerID), Action: C.GoString(action)},
 		},
-	}); err != nil {
+	}
+	if err := fs.Mount(C.GoString(path), entry); err != nil {
 		return -1
 	}
 	return 0
@@ -83,9 +71,7 @@ func skills_fs_mount_api(handle C.uintptr_t, path *C.char, providerID *C.char, a
 
 //export skills_fs_read
 func skills_fs_read(handle C.uintptr_t, path *C.char, outLen *C.int) *C.char {
-	fsMu.Lock()
-	fs, ok := fsRegistry[uintptr(handle)]
-	fsMu.Unlock()
+	fs, ok := reg.Get(uintptr(handle))
 	if !ok {
 		return nil
 	}
@@ -98,15 +84,13 @@ func skills_fs_read(handle C.uintptr_t, path *C.char, outLen *C.int) *C.char {
 }
 
 //export skills_fs_write
-func skills_fs_write(handle C.uintptr_t, path *C.char, data *C.char, len C.int) C.int {
-	fsMu.Lock()
-	fs, ok := fsRegistry[uintptr(handle)]
-	fsMu.Unlock()
+func skills_fs_write(handle C.uintptr_t, path *C.char, data *C.char, length C.int) C.int {
+	fs, ok := reg.Get(uintptr(handle))
 	if !ok {
 		return -1
 	}
-	b := C.GoBytes(unsafe.Pointer(data), len)
-	if err := fs.Write(context.Background(), C.GoString(path), b, core.CallerIdentity{}); err != nil {
+	payload := C.GoBytes(unsafe.Pointer(data), length)
+	if err := fs.Write(context.Background(), C.GoString(path), payload, core.CallerIdentity{}); err != nil {
 		return -1
 	}
 	return 0
