@@ -75,6 +75,7 @@ func printVersion(w io.Writer) {
 func setupLogger(level string, logFile string) *slog.Logger {
 	var lw *os.File = os.Stderr
 	if logFile != "" {
+		// #nosec G302 -- log files are intentionally world-readable for debugging.
 		f, err := os.OpenFile(logFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 		if err == nil {
 			lw = f
@@ -98,7 +99,8 @@ func setupLogger(level string, logFile string) *slog.Logger {
 func maybeDaemonize(daemon bool, pidfile string) bool {
 	if !daemon {
 		if pidfile != "" {
-			os.WriteFile(pidfile, []byte(fmt.Sprintf("%d\n", os.Getpid())), 0644)
+			// #nosec G306 -- PID files follow standard world-readable convention.
+		os.WriteFile(pidfile, []byte(fmt.Sprintf("%d\n", os.Getpid())), 0644)
 		}
 		return false
 	}
