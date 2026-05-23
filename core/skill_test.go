@@ -37,6 +37,10 @@ func TestSkillGeneratorRemoveErrors(t *testing.T) {
 	}
 
 	// RemoveAll error path: create a skill dir and make it unwritable.
+	// Windows does not honor Unix permission bits, so skip.
+	if _, err := os.Stat("/proc"); os.IsNotExist(err) {
+		t.Skip("skipping unwritable directory test on Windows")
+	}
 	root := t.TempDir()
 	gen2 := NewSkillGenerator(root)
 	if err := gen2.Generate(SkillConfig{
