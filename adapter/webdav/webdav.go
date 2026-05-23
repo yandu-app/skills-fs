@@ -353,7 +353,7 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleOptions(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Allow", "GET, HEAD, PUT, DELETE, MKCOL, COPY, MOVE, PROPFIND, PROPPATCH, OPTIONS")
-	w.Header().Set("DAV", "1, 2")
+	w.Header().Set("DAV", "1")
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -362,7 +362,8 @@ func (s *Server) handleLock(w http.ResponseWriter, r *http.Request, path string,
 		http.Error(w, "read-only filesystem", http.StatusForbidden)
 		return
 	}
-	// Return a fake lock token so clients that require locking can proceed.
+	// Stub: LOCK is not enforced. A fake token is returned so that clients
+	// requiring locking can proceed without errors, but no lock state is tracked.
 	token := fmt.Sprintf("opaquelocktoken:%d", time.Now().UnixNano())
 	lock := lockDiscovery{
 		XmlnsD: "DAV:",
@@ -386,6 +387,7 @@ func (s *Server) handleUnlock(w http.ResponseWriter, r *http.Request, path strin
 		http.Error(w, "read-only filesystem", http.StatusForbidden)
 		return
 	}
+	// Stub: UNLOCK always succeeds without validating lock tokens.
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -732,8 +734,8 @@ func (s *Server) propfindResponseCached(p string, stat core.Stat, etagStr string
 		GetContentLength:    stat.Size,
 		GetContentType:      contentTypeFromKind(stat.Kind),
 		ResourceType:        rt,
-		CreationDate:        "1970-01-01T00:00:00Z",
-		GetLastModified:     "Thu, 01 Jan 1970 00:00:00 GMT",
+		CreationDate:        time.Now().UTC().Format(time.RFC3339),
+		GetLastModified:     time.Now().UTC().Format(http.TimeFormat),
 		QuotaAvailableBytes: 1 << 62,
 		QuotaUsedBytes:      0,
 	}
