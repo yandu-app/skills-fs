@@ -91,6 +91,7 @@ type providerCacheEntry struct {
 	expires time.Time
 }
 
+// NewFS creates a new virtual filesystem. Panics if cfg is invalid.
 func NewFS(cfg GlobalConfig) *FileSystem {
 	if err := cfg.Validate(); err != nil {
 		panic("invalid GlobalConfig: " + err.Error())
@@ -169,6 +170,7 @@ func (fs *FileSystem) runCleanup() {
 	}
 }
 
+// RegisterProvider adds a provider to the filesystem. Returns EEXIST if already registered.
 func (fs *FileSystem) RegisterProvider(p Provider) error {
 	if p == nil || p.ID() == "" {
 		return posix(EINVAL, "", "", nil)
@@ -208,6 +210,8 @@ func (fs *FileSystem) RegisterNotifier(fn func(Event), prefix string) func() {
 	return func() { fs.events.unregister(id) }
 }
 
+// Mount registers a node at the given path. Returns EEXIST if the path is taken,
+// EINVAL if provider ops reference an unregistered provider, or EBUSY if MaxMounts is reached.
 func (fs *FileSystem) Mount(p string, entry MountEntry) (err error) {
 	done := fs.audit("mount", p, CallerIdentity{})
 	defer func() { done(err) }()
@@ -270,6 +274,7 @@ func (fs *FileSystem) Mount(p string, entry MountEntry) (err error) {
 	return nil
 }
 
+// Unmount removes a mounted node and invalidates its cached stat.
 func (fs *FileSystem) Unmount(p string) (err error) {
 	done := fs.audit("unmount", p, CallerIdentity{})
 	defer func() { done(err) }()
@@ -330,6 +335,7 @@ func (fs *FileSystem) Rename(oldPath, newPath string) (err error) {
 	return nil
 }
 
+// Stat returns metadata for the node at path. Results are cached within StatCacheTTL.
 func (fs *FileSystem) Stat(path string, caller CallerIdentity) (st Stat, err error) {
 	done := fs.audit("stat", path, caller)
 	defer func() { done(err) }()
@@ -384,6 +390,7 @@ func (fs *FileSystem) Stat(path string, caller CallerIdentity) (st Stat, err err
 	return Stat{Path: path, Kind: m.Kind, Mode: m.Mode, UID: m.UID, GID: m.GID, Size: size}, nil
 }
 
+// Readdir lists children of a directory node. Returns ENOTDIR if the path is not KindDir.
 func (fs *FileSystem) Readdir(path string, caller CallerIdentity) (entries []DirEntry, err error) {
 	done := fs.audit("readdir", path, caller)
 	defer func() { done(err) }()
@@ -466,6 +473,8 @@ func filterDirEntriesByNamespace(r *router, entries []DirEntry, parent string, c
 	return out
 }
 
+// Read returns the contents of a blob, link, or API node.
+// Returns EISDIR for directories, ENOSYS for streams, EACCES if read permission is missing.
 func (fs *FileSystem) Read(ctx context.Context, path string, caller CallerIdentity) (data []byte, err error) {
 	done := fs.audit("read", path, caller)
 	defer func() { done(err) }()
@@ -552,6 +561,9 @@ func (fs *FileSystem) Read(ctx context.Context, path string, caller CallerIdenti
 	}
 }
 
+// Write replaces blob data or dispatches a write to the API provider.
+// For blob mounts the payload replaces the entire content.
+// Invalidates the stat cache on success.
 func (fs *FileSystem) Write(ctx context.Context, path string, payload []byte, caller CallerIdentity) (err error) {
 	done := fs.audit("write", path, caller)
 	defer func() { done(err) }()
