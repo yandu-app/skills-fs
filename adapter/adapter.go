@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"time"
-
-	"github.com/skills-fs/skills-fs/core"
 )
 
 var ErrNotImplemented = errors.New("adapter not implemented")
@@ -44,14 +42,4 @@ func (o MountOptions) ShutdownContext(ctx context.Context) (context.Context, con
 		return ctx, func() {}
 	}
 	return context.WithTimeout(ctx, timeout)
-}
-
-type MountedFS interface {
-	Mount(ctx context.Context) error
-	Unmount(ctx context.Context) error
-	MountPoint() string
-}
-
-type Factory interface {
-	New(fs *core.FileSystem, mountPoint string, opts MountOptions) MountedFS
 }

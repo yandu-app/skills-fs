@@ -20,6 +20,7 @@ type fakeProvider struct {
 	mu       sync.Mutex
 	calls    []providerCall
 	response []byte
+	invokeCh chan struct{}   // test hook: receives signal when Invoke completes
 }
 
 type blockingProvider struct {
@@ -72,6 +73,14 @@ func (p *fakeProvider) ID() string {
 }
 
 func (p *fakeProvider) Invoke(_ context.Context, action string, params map[string]interface{}) (*ProviderResult, error) {
+	defer func() {
+		if p.invokeCh != nil {
+			select {
+			case p.invokeCh <- struct{}{}:
+			default:
+			}
+		}
+	}()
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.calls = append(p.calls, providerCall{action: action, params: params})
@@ -707,7 +716,7 @@ func TestMountReservedPath(t *testing.T) {
 
 func TestAsyncProviderRead(t *testing.T) {
 	fs := NewFS(GlobalConfig{})
-	p := &fakeProvider{id: "async", response: []byte("delayed")}
+	p := &fakeProvider{id: "async", response: []byte("delayed"), invokeCh: make(chan struct{}, 8)}
 	if err := fs.RegisterProvider(p); err != nil {
 		t.Fatal(err)
 	}
@@ -729,8 +738,8 @@ func TestAsyncProviderRead(t *testing.T) {
 		t.Fatalf("expected empty async result, got %q", data)
 	}
 
-	// Wait for background invocation.
-	time.Sleep(100 * time.Millisecond)
+	// Wait for background invocation to complete (deterministic).
+	<-p.invokeCh
 	p.mu.Lock()
 	if len(p.calls) != 1 {
 		t.Fatalf("expected 1 async call, got %d", len(p.calls))
@@ -1418,8 +1427,11 @@ func TestCircuitBreaker(t *testing.T) {
 		t.Fatalf("expected ECOMM, got %v", err)
 	}
 
-	// Wait for reset timeout to enter half-open.
-	time.Sleep(150 * time.Millisecond)
+	// Rewind lastFailure so breakerOpen sees reset timeout has elapsed.
+	b := fs.breakerFor("p1")
+	b.mu.Lock()
+	b.lastFailure = time.Now().Add(-200 * time.Millisecond)
+	b.mu.Unlock()
 
 	// With fakeProvider still failing, half-open call fails and re-opens breaker.
 	_, err = fs.Read(context.Background(), "/api", CallerIdentity{})
@@ -1431,8 +1443,10 @@ func TestCircuitBreaker(t *testing.T) {
 	fp.err = nil
 	fp.response = []byte("ok")
 
-	// Wait again for half-open.
-	time.Sleep(150 * time.Millisecond)
+	// Rewind lastFailure again for second half-open attempt.
+	b.mu.Lock()
+	b.lastFailure = time.Now().Add(-200 * time.Millisecond)
+	b.mu.Unlock()
 
 	// Half-open success should close breaker.
 	data, err := fs.Read(context.Background(), "/api", CallerIdentity{})
@@ -1733,8 +1747,13 @@ func TestProviderCacheHit(t *testing.T) {
 		t.Fatalf("expected 1 provider call, got %d", p.callCount)
 	}
 
-	// Wait for TTL expiration.
-	time.Sleep(150 * time.Millisecond)
+	// Expire cache entry deterministically.
+	fs.providerCacheMu.Lock()
+	for k, ent := range fs.providerCache {
+		ent.expires = time.Now().Add(-time.Second)
+		fs.providerCache[k] = ent
+	}
+	fs.providerCacheMu.Unlock()
 
 	// Third call should hit the provider again.
 	data, err = fs.Read(context.Background(), "/api", CallerIdentity{})

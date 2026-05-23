@@ -43,8 +43,17 @@ func TestFlockContextCancellation(t *testing.T) {
 		done <- h2.Flock(ctx, LockExclusive, false)
 	}()
 
-	// Give h2 time to enter the wait loop.
-	time.Sleep(20 * time.Millisecond)
+	// Wait until h2 enters cond.Wait (which releases lockState.mu).
+	// A detector goroutine acquires s.mu; once it succeeds we know h2
+	// is parked in cond.Wait, not just scheduled-but-not-yet-running.
+	s := fs.locks.stateFor("/blob")
+	blocked := make(chan struct{})
+	go func() {
+		s.mu.Lock()
+		close(blocked)
+		s.mu.Unlock()
+	}()
+	<-blocked
 	cancel()
 
 	select {

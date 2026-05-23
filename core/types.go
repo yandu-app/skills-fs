@@ -239,7 +239,10 @@ type HealthCheckable interface {
 	HealthCheck(ctx context.Context) error
 }
 
-// ProviderResult is returned by [Provider.Invoke].
+// ProviderResult is returned by Provider.Invoke. Data is forwarded through
+// FileSystem.Read; Meta and ContentType are currently provider-side metadata
+// not yet wired to adapters (e.g. WebDAV could use ContentType for the
+// Content-Type header instead of contentTypeFromKind).
 type ProviderResult struct {
 	Data        []byte
 	Meta        map[string]string
