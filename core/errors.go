@@ -6,6 +6,7 @@ import (
 	"fmt"
 )
 
+// Errno represents a POSIX error code returned by filesystem operations.
 type Errno string
 
 const (
@@ -27,6 +28,8 @@ const (
 	ELOOP     Errno = "ELOOP"
 )
 
+// PosixError is the error type returned by all filesystem operations.
+// Use IsCode to check for specific error codes.
 type PosixError struct {
 	Code Errno
 	Op   OpCode
@@ -49,6 +52,7 @@ func posix(code Errno, op OpCode, path string, err error) error {
 	return &PosixError{Code: code, Op: op, Path: path, Err: err}
 }
 
+// IsCode reports whether err wraps a PosixError with the given code.
 func IsCode(err error, code Errno) bool {
 	var pe *PosixError
 	return errors.As(err, &pe) && pe.Code == code
@@ -59,6 +63,9 @@ func isPosix(err error) bool {
 	return errors.As(err, &pe)
 }
 
+// MapProviderError converts a provider-returned error into a PosixError.
+// If the error implements ProviderError, its code is mapped to the
+// corresponding Errno. Otherwise the error is wrapped as EIO.
 func MapProviderError(err error, op OpCode, path string) error {
 	if err == nil {
 		return nil

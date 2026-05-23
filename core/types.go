@@ -6,6 +6,7 @@ import (
 	"time"
 )
 
+// NodeKind classifies the type of a mounted node.
 type NodeKind string
 
 const (
@@ -16,6 +17,7 @@ const (
 	KindLink   NodeKind = "link"
 )
 
+// OpCode identifies a filesystem operation for capability checks and error reporting.
 type OpCode string
 
 const (
@@ -25,6 +27,8 @@ const (
 	OpReaddir OpCode = "readdir"
 )
 
+// GlobalConfig controls filesystem-wide limits and behaviour.
+// Apply defaults by calling [NewFS], which invokes withDefaults internally.
 type GlobalConfig struct {
 	Label             string
 	MaxOpenHandles    int
@@ -53,6 +57,7 @@ type AuditEntry struct {
 	Duration  time.Duration
 }
 
+// CircuitBreakerConfig configures per-provider circuit breaking.
 type CircuitBreakerConfig struct {
 	Enabled          bool
 	FailureThreshold int           // consecutive failures before opening
@@ -133,6 +138,9 @@ type StreamConfig struct {
 	MaxChunkSize int // max bytes per read/write; zero = default (64 KiB)
 }
 
+// MountEntry describes a single node in the virtual filesystem.
+// Populate Kind, Mode, and at least one data source (BlobData, LinkPath,
+// Ops, or Stream) before passing to [FileSystem.Mount].
 type MountEntry struct {
 	ID           uint64
 	Path         string
@@ -194,6 +202,7 @@ func (e MountEntry) Validate() error {
 	return nil
 }
 
+// CapConfig binds an [OpCode] to a provider action.
 type CapConfig struct {
 	ProviderID string
 	Action     string
@@ -203,18 +212,22 @@ type CapConfig struct {
 	CacheTTL   time.Duration // provider result cache TTL; zero = disabled
 }
 
+// OpContext carries operation metadata into ParamsFn callbacks.
 type OpContext struct {
 	Path   string
 	Op     OpCode
 	Caller CallerIdentity
 }
 
+// CallerIdentity identifies the caller for permission checks.
 type CallerIdentity struct {
 	UID       uint32
 	GID       uint32
 	Namespace string // empty = global namespace
 }
 
+// Provider is the interface that external data sources implement.
+// Register implementations with [FileSystem.RegisterProvider].
 type Provider interface {
 	ID() string
 	Invoke(ctx context.Context, action string, params map[string]interface{}) (*ProviderResult, error)
@@ -226,12 +239,14 @@ type HealthCheckable interface {
 	HealthCheck(ctx context.Context) error
 }
 
+// ProviderResult is returned by [Provider.Invoke].
 type ProviderResult struct {
 	Data        []byte
 	Meta        map[string]string
 	ContentType string
 }
 
+// SkillConfig describes a skill to be generated into the /skills namespace.
 type SkillConfig struct {
 	Enabled       bool
 	Name          string
@@ -245,6 +260,7 @@ type SkillConfig struct {
 	References    []string
 }
 
+// Stat describes a mounted node, returned by [FileSystem.Stat].
 type Stat struct {
 	Path string
 	Kind NodeKind
@@ -254,6 +270,7 @@ type Stat struct {
 	Size int64
 }
 
+// DirEntry is a single child returned by [FileSystem.Readdir].
 type DirEntry struct {
 	Name string
 	Kind NodeKind
