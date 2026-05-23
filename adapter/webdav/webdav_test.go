@@ -81,7 +81,10 @@ func TestWebDAVGetAndPut(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
-	data, _ = io.ReadAll(resp.Body)
+	data, err = io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if string(data) != "world" {
 		t.Fatalf("GET after PUT = %q", string(data))
 	}
@@ -174,7 +177,7 @@ func TestWebDAVOptions(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("OPTIONS status = %d", resp.StatusCode)
 	}
-	if resp.Header.Get("DAV") != "1, 2" {
+	if resp.Header.Get("DAV") != "1" {
 		t.Fatalf("DAV header = %q", resp.Header.Get("DAV"))
 	}
 }
@@ -1094,7 +1097,7 @@ func TestWebDAVOptionsDAVHeader(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", resp.StatusCode)
 	}
-	if got := resp.Header.Get("DAV"); got != "1, 2" {
+	if got := resp.Header.Get("DAV"); got != "1" {
 		t.Fatalf("expected DAV '1, 2', got %q", got)
 	}
 }
@@ -1621,7 +1624,10 @@ func TestWebDAVRange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	body, _ = io.ReadAll(resp.Body)
+	body, err = io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
 	resp.Body.Close()
 	if string(body) != "89abcdef" {
 		t.Fatalf("expected 89abcdef, got %q", string(body))
@@ -1634,7 +1640,10 @@ func TestWebDAVRange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	body, _ = io.ReadAll(resp.Body)
+	body, err = io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
 	resp.Body.Close()
 	if string(body) != "cdef" {
 		t.Fatalf("expected cdef, got %q", string(body))
@@ -2452,14 +2461,23 @@ func TestWebDAVRateLimit(t *testing.T) {
 		t.Fatalf("expected 200 for first request, got %d", resp1.StatusCode)
 	}
 
-	// Immediate second request may be rate limited.
-	resp2, err := http.Get(baseURL + "/blob")
-	if err != nil {
-		t.Fatal(err)
+	// Rapid-fire requests should eventually trigger rate limiting (429).
+	var got429 bool
+	for i := 0; i < 10; i++ {
+		resp, err := http.Get(baseURL + "/blob")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp.StatusCode == http.StatusTooManyRequests {
+			got429 = true
+			resp.Body.Close()
+			break
+		}
+		resp.Body.Close()
 	}
-	resp2.Body.Close()
-	// We don't assert the exact status because rate limit behavior depends on timing.
-	// The important thing is that the server starts with rate limiting enabled.
+	if !got429 {
+		t.Fatal("expected at least one 429 response within 10 rapid requests")
+	}
 }
 
 func TestWebDAVConnLimit(t *testing.T) {

@@ -303,7 +303,7 @@ func TestWebSocketOriginAllowed(t *testing.T) {
 		t.Fatal("expected handshake failure for bad origin")
 	}
 	if resp != nil && resp.StatusCode != http.StatusForbidden {
-		t.Logf("unexpected status: %d", resp.StatusCode)
+		t.Errorf("expected status 403 for bad origin, got %d", resp.StatusCode)
 	}
 
 	// Good origin should succeed.
@@ -325,17 +325,14 @@ func TestWebSocketMaxPayload(t *testing.T) {
 	ws := dial(t, srv)
 	defer ws.Close()
 
-	// Send a message larger than 64 KiB.
+	// Send a message larger than 64 KiB — the connection should reject it.
 	big := strings.Repeat("x", 128*1024)
-	if err := ws.WriteJSON(WsMsg{Op: "write", Path: "/blob", Data: big}); err != nil {
-		// The send itself may succeed; the receive should fail or error out.
-		t.Logf("send error (acceptable): %v", err)
-	}
+	sendErr := ws.WriteJSON(WsMsg{Op: "write", Path: "/blob", Data: big})
 	ws.SetReadDeadline(time.Now().Add(2 * time.Second))
 	var reply WsReply
-	if err := ws.ReadJSON(&reply); err != nil {
-		// Receiving a too-large frame should close the connection.
-		t.Logf("receive error (expected): %v", err)
+	readErr := ws.ReadJSON(&reply)
+	if sendErr == nil && readErr == nil {
+		t.Fatal("expected error for oversized payload, but send and read both succeeded")
 	}
 }
 

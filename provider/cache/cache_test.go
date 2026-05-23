@@ -52,8 +52,14 @@ func TestCacheMissDifferentAction(t *testing.T) {
 	inner := &mockProvider{id: "mock", result: []byte("ok")}
 	p := New(inner, time.Minute)
 
-	_, _ = p.Invoke(context.Background(), "a", nil)
-	_, _ = p.Invoke(context.Background(), "b", nil)
+	_, err := p.Invoke(context.Background(), "a", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = p.Invoke(context.Background(), "b", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if inner.calls != 2 {
 		t.Fatalf("expected 2 calls, got %d", inner.calls)
@@ -64,8 +70,12 @@ func TestCacheMissDifferentParams(t *testing.T) {
 	inner := &mockProvider{id: "mock", result: []byte("ok")}
 	p := New(inner, time.Minute)
 
-	_, _ = p.Invoke(context.Background(), "a", map[string]interface{}{"x": 1})
-	_, _ = p.Invoke(context.Background(), "a", map[string]interface{}{"x": 2})
+	if _, err := p.Invoke(context.Background(), "a", map[string]interface{}{"x": 1}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Invoke(context.Background(), "a", map[string]interface{}{"x": 2}); err != nil {
+		t.Fatal(err)
+	}
 
 	if inner.calls != 2 {
 		t.Fatalf("expected 2 calls, got %d", inner.calls)
@@ -76,9 +86,13 @@ func TestCacheExpires(t *testing.T) {
 	inner := &mockProvider{id: "mock", result: []byte("ok")}
 	p := New(inner, 10*time.Millisecond)
 
-	_, _ = p.Invoke(context.Background(), "a", nil)
+	if _, err := p.Invoke(context.Background(), "a", nil); err != nil {
+		t.Fatal(err)
+	}
 	time.Sleep(20 * time.Millisecond)
-	_, _ = p.Invoke(context.Background(), "a", nil)
+	if _, err := p.Invoke(context.Background(), "a", nil); err != nil {
+		t.Fatal(err)
+	}
 
 	if inner.calls != 2 {
 		t.Fatalf("expected 2 calls after expiry, got %d", inner.calls)
@@ -104,9 +118,13 @@ func TestCacheInvalidate(t *testing.T) {
 	inner := &mockProvider{id: "mock", result: []byte("ok")}
 	p := New(inner, time.Minute)
 
-	_, _ = p.Invoke(context.Background(), "a", nil)
+	if _, err := p.Invoke(context.Background(), "a", nil); err != nil {
+		t.Fatal(err)
+	}
 	p.Invalidate()
-	_, _ = p.Invoke(context.Background(), "a", nil)
+	if _, err := p.Invoke(context.Background(), "a", nil); err != nil {
+		t.Fatal(err)
+	}
 
 	if inner.calls != 2 {
 		t.Fatalf("expected 2 calls after invalidate, got %d", inner.calls)
