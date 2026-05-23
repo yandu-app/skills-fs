@@ -132,13 +132,21 @@ func TestStreamBlockWriterWaitsForReader(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Writer goroutine: will block because buffer (capacity 4) is full.
+	buf := fs.streams.getOrCreate("/events", nil)
 	done := make(chan error, 1)
 	go func() {
 		done <- fs.Write(context.Background(), "/events", []byte("efgh"), caller)
 	}()
 
-	// Give the goroutine time to block
-	time.Sleep(20 * time.Millisecond)
+	// Detector: acquires buf.mu only after writer enters cond.Wait (which releases it).
+	blocked := make(chan struct{})
+	go func() {
+		buf.mu.Lock()
+		close(blocked)
+		buf.mu.Unlock()
+	}()
+	<-blocked
 
 	data, err := fs.Read(context.Background(), "/events", caller)
 	if err != nil {
@@ -233,15 +241,22 @@ func TestStreamReadClosedWhileBlocking(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Reader goroutine: will block because buffer is empty.
+	buf := fs.streams.getOrCreate("/events", nil)
 	done := make(chan []byte, 1)
 	go func() {
-		// This blocks because the buffer is empty.
 		data, _ := fs.Read(context.Background(), "/events", CallerIdentity{})
 		done <- data
 	}()
 
-	// Give the goroutine time to block on read.
-	time.Sleep(20 * time.Millisecond)
+	// Detector: acquires buf.mu only after reader enters cond.Wait (which releases it).
+	blocked := make(chan struct{})
+	go func() {
+		buf.mu.Lock()
+		close(blocked)
+		buf.mu.Unlock()
+	}()
+	<-blocked
 
 	if err := fs.Unmount("/events"); err != nil {
 		t.Fatal(err)

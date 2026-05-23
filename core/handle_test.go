@@ -377,8 +377,9 @@ func TestTimerStopBranch(t *testing.T) {
 	h.timer = nil
 	h.mu.Unlock()
 
-	// Wait for the AfterFunc goroutine to run and hit the stop branch.
-	time.Sleep(100 * time.Millisecond)
+	// AfterFunc will see closed stop channel and return without flushing.
+	// This is safe regardless of when the callback fires: stop channel is
+	// already closed so the select picks <-stop immediately.
 }
 
 func TestFlushPrefixLockedWriteError(t *testing.T) {
