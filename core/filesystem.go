@@ -109,7 +109,7 @@ func NewFS(cfg GlobalConfig) *FileSystem {
 		breakers:      make(map[string]*circuitBreaker),
 		providerCache: make(map[string]providerCacheEntry),
 		bufPool: sync.Pool{
-			New: func() interface{} {
+			New: func() any {
 				b := make([]byte, streamReadChunk)
 				return &b
 			},
@@ -349,7 +349,9 @@ func (fs *FileSystem) Stat(path string, caller CallerIdentity) (st Stat, err err
 	} else if name, ok := skillFilePath(path); ok {
 		data, readErr := fs.skills.ReadSkillFile(name)
 		if readErr != nil {
-			err = readErr
+			if !isPosix(readErr) {
+				return Stat{}, posix(ENOENT, OpStat, path, readErr)
+			}
 			return Stat{}, readErr
 		}
 		return Stat{Path: path, Kind: KindBlob, Mode: 0o444, UID: fs.cfg.DefaultUID, GID: fs.cfg.DefaultGID, Size: int64(len(data))}, nil

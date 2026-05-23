@@ -54,6 +54,11 @@ func IsCode(err error, code Errno) bool {
 	return errors.As(err, &pe) && pe.Code == code
 }
 
+func isPosix(err error) bool {
+	var pe *PosixError
+	return errors.As(err, &pe)
+}
+
 func MapProviderError(err error, op OpCode, path string) error {
 	if err == nil {
 		return nil

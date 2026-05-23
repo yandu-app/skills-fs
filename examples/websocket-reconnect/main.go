@@ -174,13 +174,6 @@ func (c *reconnectClient) closeConn() {
 	c.ws = nil
 }
 
-func min(a, b time.Duration) time.Duration {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 // simulateServerRestarts unmounts and remounts the server to force client reconnects.
 func simulateServerRestarts(ctx context.Context, server *wsadapter.Server, fs *core.FileSystem) {
 	ticker := time.NewTicker(8 * time.Second)
