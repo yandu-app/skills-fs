@@ -2546,4 +2546,34 @@ func TestRawWriteParamsPassesTrimmedPayload(t *testing.T) {
 	if !ok || id != "42" {
 		t.Fatalf("expected path param id=42, got %v", id)
 	}
+func TestDeterministicCacheKey(t *testing.T) {
+	// Same params in different map iteration orders must produce the same key.
+	params := map[string]interface{}{
+		"alpha":   1,
+		"beta":    2,
+		"gamma":   3,
+		"delta":   4,
+		"epsilon": 5,
+	}
+
+	// Build the key many times; all must be identical.
+	first := deterministicCacheKey("prov", "act", params)
+	for i := 0; i < 100; i++ {
+		got := deterministicCacheKey("prov", "act", params)
+		if got != first {
+			t.Fatalf("iteration %d: key %q differs from first %q", i, got, first)
+		}
+	}
+
+	// Different params must produce a different key.
+	other := deterministicCacheKey("prov", "act", map[string]interface{}{"alpha": 99})
+	if other == first {
+		t.Fatalf("expected different key for different params, got same: %q", first)
+	}
+
+	// Nil params must work without panic.
+	_ = deterministicCacheKey("prov", "act", nil)
+
+	// Empty params must work without panic.
+	_ = deterministicCacheKey("prov", "act", map[string]interface{}{})
 }
