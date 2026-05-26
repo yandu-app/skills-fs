@@ -3,6 +3,7 @@
 package fuse
 
 import (
+	"container/list"
 	"context"
 	"errors"
 	"path"
@@ -34,7 +35,13 @@ func (s *Server) Mount(ctx context.Context) error {
 		opts.MountOptions.Options = append(opts.MountOptions.Options, "ro")
 	}
 
-	root := &rootNode{fsys: s.fs, readOnly: s.opts.ReadOnly, inodes: make(map[string]*fs.Inode)}
+	root := &rootNode{
+		fsys:     s.fs,
+		readOnly: s.opts.ReadOnly,
+		inodes:   make(map[string]*fs.Inode),
+		lru:      list.New(),
+		lruPos:   make(map[string]*list.Element),
+	}
 	server, err := fs.Mount(s.mountPoint, root, opts)
 	if err != nil {
 		return err
@@ -76,12 +83,22 @@ func (s *Server) Unmount(ctx context.Context) error {
 
 // --- go-fuse filesystem implementation ---
 
+// inodeCap is the maximum number of inodes tracked before LRU eviction.
+const inodeCap = 10_000
+
+// lruEntry is a node in the LRU doubly-linked list.
+type lruEntry struct {
+	key string
+}
+
 type rootNode struct {
 	fs.Inode
 	fsys     *core.FileSystem
 	readOnly bool
 	mu       sync.RWMutex
 	inodes   map[string]*fs.Inode
+	lru      *list.List                       // front = most recently used
+	lruPos   map[string]*list.Element         // key → position in lru
 }
 
 var _ fs.NodeGetattrer = (*rootNode)(nil)
@@ -111,12 +128,21 @@ func (r *rootNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) 
 	if err != nil {
 		return nil, toErrno(err)
 	}
-	node := &pathNode{path: p, fsys: r.fsys, readOnly: r.readOnly}
 	fillEntryOut(out, stat)
 	mode := fileMode(stat)
-	ino := r.NewInode(ctx, node, fs.StableAttr{Mode: uint32(mode)})
+
 	r.mu.Lock()
+	if existing, ok := r.inodes[p]; ok {
+		// Reuse existing inode — promote to front of LRU.
+		r.lruMoveToFront(p)
+		r.mu.Unlock()
+		return existing, fs.OK
+	}
+	node := &pathNode{path: p, fsys: r.fsys, readOnly: r.readOnly}
+	ino := r.NewInode(ctx, node, fs.StableAttr{Mode: uint32(mode)})
 	r.inodes[p] = ino
+	r.lruAdd(p)
+	r.evictOldest()
 	r.mu.Unlock()
 	return ino, fs.OK
 }
@@ -197,7 +223,7 @@ func (r *rootNode) handleEvent(e core.Event) {
 
 	case core.EventRemove:
 		r.mu.Lock()
-		delete(r.inodes, e.Path)
+		r.inodeRemove(e.Path)
 		r.mu.Unlock()
 		r.notifyParentEntry(e.Path)
 	}
@@ -217,6 +243,41 @@ func (r *rootNode) notifyParentEntry(p string) {
 	r.mu.RUnlock()
 	if ok {
 		parent.NotifyEntry(name)
+	}
+}
+
+// --- LRU inode eviction helpers (caller must hold r.mu) ---
+
+func (r *rootNode) lruAdd(key string) {
+	elem := r.lru.PushFront(&lruEntry{key: key})
+	r.lruPos[key] = elem
+}
+
+func (r *rootNode) lruMoveToFront(key string) {
+	if elem, ok := r.lruPos[key]; ok {
+		r.lru.MoveToFront(elem)
+	}
+}
+
+func (r *rootNode) inodeRemove(key string) {
+	delete(r.inodes, key)
+	if elem, ok := r.lruPos[key]; ok {
+		r.lru.Remove(elem)
+		delete(r.lruPos, key)
+	}
+}
+
+// evictOldest removes the oldest LRU entries when the inode map exceeds inodeCap.
+func (r *rootNode) evictOldest() {
+	for len(r.inodes) > inodeCap {
+		elem := r.lru.Back()
+		if elem == nil {
+			break
+		}
+		entry := elem.Value.(*lruEntry)
+		r.lru.Remove(elem)
+		delete(r.lruPos, entry.key)
+		delete(r.inodes, entry.key)
 	}
 }
 
