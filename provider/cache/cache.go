@@ -59,7 +59,13 @@ func (p *Provider) Invoke(ctx context.Context, action string, params map[string]
 	p.mu.Lock()
 	p.store[key] = entry{result: res, expires: time.Now().Add(p.ttl)}
 	p.mu.Unlock()
-	return res, nil
+	// Return a defensive copy so the caller cannot mutate cached data
+	// through the returned pointer (fixes #1634).
+	return &core.ProviderResult{
+		Data:        append([]byte(nil), res.Data...),
+		Meta:        copyMap(res.Meta),
+		ContentType: res.ContentType,
+	}, nil
 }
 
 // Invalidate removes all cached entries.
