@@ -5,7 +5,6 @@ package fuse
 import (
 	"container/list"
 	"context"
-	"errors"
 	"path"
 	"path/filepath"
 	"sync"
@@ -493,6 +492,21 @@ var _ fs.FileGetattrer = (*fileHandle)(nil)
 var _ fs.FileSetattrer = (*fileHandle)(nil)
 
 func (fh *fileHandle) Read(ctx context.Context, buf []byte, off int64) (fuse.ReadResult, syscall.Errno) {
+	// For blob mounts, read directly from the stored data with offset.
+	// This avoids calling ReadAll (which re-reads the entire blob) on every
+	// kernel read request (typically 4 KB).
+	if m := fh.h.Mount(); m.Kind == core.KindBlob {
+		data := m.BlobData
+		if off >= int64(len(data)) {
+			return fuse.ReadResultData(nil), fs.OK
+		}
+		end := off + int64(len(buf))
+		if end > int64(len(data)) {
+			end = int64(len(data))
+		}
+		return fuse.ReadResultData(data[off:end]), fs.OK
+	}
+	// For API, link, and stream mounts, fall back to ReadAll + offset.
 	data, err := fh.h.ReadAll(ctx)
 	if err != nil {
 		return nil, toErrno(err)
@@ -500,11 +514,11 @@ func (fh *fileHandle) Read(ctx context.Context, buf []byte, off int64) (fuse.Rea
 	if off >= int64(len(data)) {
 		return fuse.ReadResultData(nil), fs.OK
 	}
-	data = data[off:]
-	if len(data) > len(buf) {
-		data = data[:len(buf)]
+	end := off + int64(len(buf))
+	if end > int64(len(data)) {
+		end = int64(len(data))
 	}
-	return fuse.ReadResultData(data), fs.OK
+	return fuse.ReadResultData(data[off:end]), fs.OK
 }
 
 func (fh *fileHandle) Write(ctx context.Context, data []byte, off int64) (uint32, syscall.Errno) {
@@ -614,11 +628,7 @@ func toErrno(err error) syscall.Errno {
 	if err == nil {
 		return fs.OK
 	}
-	var pe *core.PosixError
-	if !errors.As(err, &pe) {
-		return syscall.EIO
-	}
-	switch pe.Code {
+	switch core.ExtractErrno(err) {
 	case core.ENOENT:
 		return syscall.ENOENT
 	case core.EACCES:
