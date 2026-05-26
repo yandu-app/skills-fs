@@ -68,6 +68,10 @@ func (h *Handle) ID() uint64 { return h.id }
 // Path returns the mounted path the handle was opened against.
 func (h *Handle) Path() string { return h.path }
 
+// Mount returns a read-only pointer to the underlying mount entry.
+// Callers must not mutate the returned entry.
+func (h *Handle) Mount() *MountEntry { return h.mount }
+
 // Caller returns the identity captured at open time.
 func (h *Handle) Caller() CallerIdentity { return h.caller }
 

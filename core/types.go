@@ -158,6 +158,7 @@ type MountEntry struct {
 
 	BlobData []byte
 	LinkPath string
+	ModTime  time.Time
 	serial   *serialQueue
 }
 
@@ -265,12 +266,13 @@ type SkillConfig struct {
 
 // Stat describes a mounted node, returned by [FileSystem.Stat].
 type Stat struct {
-	Path string
-	Kind NodeKind
-	Mode uint32
-	UID  uint32
-	GID  uint32
-	Size int64
+	Path    string
+	Kind    NodeKind
+	Mode    uint32
+	UID     uint32
+	GID     uint32
+	Size    int64
+	ModTime time.Time
 }
 
 // DirEntry is a single child returned by [FileSystem.Readdir].
