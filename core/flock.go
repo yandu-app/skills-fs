@@ -166,10 +166,23 @@ func (m *lockManager) release(path string, h *Handle) error {
 }
 
 // purge removes the lock state for a path. Called when the mount is unmounted.
+// It clears lock holders and broadcasts before deleting so that goroutines
+// blocked in cond.Wait wake up immediately instead of hanging until the
+// deadlock timeout (fixes #1633).
 func (m *lockManager) purge(path string) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	delete(m.states, path)
+	s, ok := m.states[path]
+	if ok {
+		delete(m.states, path)
+	}
+	m.mu.Unlock()
+	if ok {
+		s.mu.Lock()
+		s.excl = nil
+		s.shared = make(map[*Handle]struct{})
+		s.cond.Broadcast()
+		s.mu.Unlock()
+	}
 }
 
 // inspect returns (sharedCount, hasExclusive) for tests and observability.
