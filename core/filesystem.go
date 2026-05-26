@@ -79,6 +79,13 @@ type FileSystem struct {
 	bufPool         sync.Pool
 	breakers        map[string]*circuitBreaker
 	breakersMu      sync.Mutex
+	// providerCache is the filesystem-level per-mount provider result cache.
+	// Entries are keyed by (providerID, action, sorted-params) and expire
+	// after the CapConfig.CacheTTL duration specified on each mount.
+	// This is separate from the provider/cache package which wraps a
+	// single Provider at registration time. When both are active the
+	// filesystem cache is consulted first; on miss the (possibly wrapped)
+	// provider is called. See provider/cache/doc.go for the full picture.
 	providerCacheMu sync.Mutex
 	providerCache   map[string]providerCacheEntry
 	cleanup         []func() error
@@ -226,7 +233,19 @@ func (fs *FileSystem) Mount(p string, entry MountEntry) (err error) {
 		return posix(EINVAL, OpStat, path, nil)
 	}
 	fs.mu.Lock()
-	defer fs.mu.Unlock()
+	err = fs.mountLocked(path, &entry)
+	fs.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	// Emit after releasing fs.mu so subscribers can call back into the FS
+	// without deadlocking (fixes #1631).
+	fs.events.emit(Event{Path: path, Kind: EventCreate})
+	return nil
+}
+
+// mountLocked performs the mount while holding fs.mu. Caller must hold fs.mu.
+func (fs *FileSystem) mountLocked(path string, entry *MountEntry) error {
 	if fs.cfg.MaxMounts > 0 && fs.router.count() >= fs.cfg.MaxMounts {
 		return posix(ENOSPC, OpStat, path, nil)
 	}
@@ -249,6 +268,9 @@ func (fs *FileSystem) Mount(p string, entry MountEntry) (err error) {
 	if entry.GID == 0 {
 		entry.GID = fs.cfg.DefaultGID
 	}
+	if entry.ModTime.IsZero() {
+		entry.ModTime = time.Now()
+	}
 	if entry.Serial {
 		entry.serial = &serialQueue{}
 	}
@@ -260,7 +282,7 @@ func (fs *FileSystem) Mount(p string, entry MountEntry) (err error) {
 			return posix(EINVAL, OpStat, path, nil)
 		}
 	}
-	mounted, err := fs.router.add(entry)
+	mounted, err := fs.router.add(*entry)
 	if err != nil {
 		return err
 	}
@@ -270,7 +292,6 @@ func (fs *FileSystem) Mount(p string, entry MountEntry) (err error) {
 			return err
 		}
 	}
-	fs.events.emit(Event{Path: path, Kind: EventCreate})
 	return nil
 }
 
@@ -283,7 +304,19 @@ func (fs *FileSystem) Unmount(p string) (err error) {
 		return err
 	}
 	fs.mu.Lock()
-	defer fs.mu.Unlock()
+	err = fs.unmountLocked(path)
+	fs.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	// Emit after releasing fs.mu so subscribers can call back into the FS
+	// without deadlocking (fixes #1631).
+	fs.events.emit(Event{Path: path, Kind: EventRemove})
+	return nil
+}
+
+// unmountLocked performs the unmount while holding fs.mu. Caller must hold fs.mu.
+func (fs *FileSystem) unmountLocked(path string) error {
 	m, err := fs.router.remove(path)
 	if err != nil {
 		return err
@@ -295,7 +328,6 @@ func (fs *FileSystem) Unmount(p string) (err error) {
 	}
 	fs.locks.purge(path)
 	fs.streams.remove(path)
-	fs.events.emit(Event{Path: path, Kind: EventRemove})
 	return nil
 }
 
@@ -318,7 +350,20 @@ func (fs *FileSystem) Rename(oldPath, newPath string) (err error) {
 		return err
 	}
 	fs.mu.Lock()
-	defer fs.mu.Unlock()
+	err = fs.renameLocked(oldPath, newPath)
+	fs.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	// Emit after releasing fs.mu so subscribers can call back into the FS
+	// without deadlocking (fixes #1631).
+	fs.events.emit(Event{Path: oldPath, Kind: EventRemove})
+	fs.events.emit(Event{Path: newPath, Kind: EventCreate})
+	return nil
+}
+
+// renameLocked performs the rename while holding fs.mu. Caller must hold fs.mu.
+func (fs *FileSystem) renameLocked(oldPath, newPath string) error {
 	m, err := fs.router.remove(oldPath)
 	if err != nil {
 		return err
@@ -330,8 +375,6 @@ func (fs *FileSystem) Rename(oldPath, newPath string) (err error) {
 		_, _ = fs.router.add(*m)
 		return err
 	}
-	fs.events.emit(Event{Path: oldPath, Kind: EventRemove})
-	fs.events.emit(Event{Path: newPath, Kind: EventCreate})
 	return nil
 }
 
@@ -387,7 +430,7 @@ func (fs *FileSystem) Stat(path string, caller CallerIdentity) (st Stat, err err
 	default:
 		return Stat{}, posix(EINVAL, OpStat, path, nil)
 	}
-	return Stat{Path: path, Kind: m.Kind, Mode: m.Mode, UID: m.UID, GID: m.GID, Size: size}, nil
+	return Stat{Path: path, Kind: m.Kind, Mode: m.Mode, UID: m.UID, GID: m.GID, Size: size, ModTime: m.ModTime}, nil
 }
 
 // Readdir lists children of a directory node. Returns ENOTDIR if the path is not KindDir.
@@ -587,20 +630,10 @@ func (fs *FileSystem) Write(ctx context.Context, path string, payload []byte, ca
 	switch m.Kind {
 	case KindBlob:
 		fs.mu.RUnlock()
-		fs.mu.Lock()
-		defer fs.mu.Unlock()
-		rm, err := fs.router.match(path)
-		if err != nil {
+		if err := fs.writeBlob(path, payload, caller); err != nil {
 			return err
 		}
-		m = rm.mount
-		if !canAccess(caller, m.UID, m.GID, m.Mode, OpWrite) {
-			return posix(EACCES, OpWrite, path, nil)
-		}
-		if int64(len(payload)) > fs.cfg.MaxBlobSize {
-			return posix(ENOSPC, OpWrite, path, nil)
-		}
-		m.BlobData = append(m.BlobData[:0], payload...)
+		// Emit after releasing fs.mu (fixes #1631).
 		fs.events.emit(Event{Path: path, Kind: EventWrite})
 		return nil
 	case KindAPI:
@@ -633,6 +666,31 @@ func (fs *FileSystem) Write(ctx context.Context, path string, payload []byte, ca
 		fs.mu.RUnlock()
 		return posix(ENOSYS, OpWrite, path, nil)
 	}
+}
+
+// writeBlob writes payload to a blob mount. It acquires fs.mu.Lock from the
+// start, avoiding the RLock-to-Lock TOCTOU window where another goroutine could
+// Unmount the path between the lock upgrade (fixes #1630).
+func (fs *FileSystem) writeBlob(path string, payload []byte, caller CallerIdentity) error {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	rm, err := fs.router.match(path)
+	if err != nil {
+		return err
+	}
+	m := rm.mount
+	if !canAccessNamespace(caller, m) {
+		return posix(ENOENT, OpWrite, path, nil)
+	}
+	if !canAccess(caller, m.UID, m.GID, m.Mode, OpWrite) {
+		return posix(EACCES, OpWrite, path, nil)
+	}
+	if int64(len(payload)) > fs.cfg.MaxBlobSize {
+		return posix(ENOSPC, OpWrite, path, nil)
+	}
+	m.BlobData = append(m.BlobData[:0], payload...)
+	m.ModTime = time.Now()
+	return nil
 }
 
 func (fs *FileSystem) Resolve(path string) (MountEntry, map[string]string, error) {
@@ -711,6 +769,9 @@ func mountEntryEqual(a, b MountEntry) bool {
 		return false
 	}
 	if a.LinkPath != b.LinkPath || a.Visibility != b.Visibility {
+		return false
+	}
+	if !a.ModTime.Equal(b.ModTime) {
 		return false
 	}
 	if !bytes.Equal(a.BlobData, b.BlobData) {
@@ -810,7 +871,7 @@ func (fs *FileSystem) invokeProvider(ctx context.Context, provider Provider, cap
 
 	cacheKey := ""
 	if cap.CacheTTL > 0 {
-		cacheKey = fmt.Sprintf("%s|%s|%v", cap.ProviderID, cap.Action, params)
+		cacheKey = deterministicCacheKey(cap.ProviderID, cap.Action, params)
 		fs.providerCacheMu.Lock()
 		ent, ok := fs.providerCache[cacheKey]
 		fs.providerCacheMu.Unlock()
@@ -839,6 +900,30 @@ func (fs *FileSystem) invokeProvider(ctx context.Context, provider Provider, cap
 
 func hasProviderOps(ops map[OpCode]*CapConfig) bool {
 	return len(ops) > 0
+}
+
+// deterministicCacheKey builds a cache key with sorted map keys to ensure
+// identical params always produce the same key regardless of Go map iteration
+// order.
+func deterministicCacheKey(providerID, action string, params map[string]interface{}) string {
+	var b strings.Builder
+	b.WriteString(providerID)
+	b.WriteByte('|')
+	b.WriteString(action)
+	if len(params) > 0 {
+		keys := make([]string, 0, len(params))
+		for k := range params {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			b.WriteByte('|')
+			b.WriteString(k)
+			b.WriteByte('=')
+			fmt.Fprintf(&b, "%v", params[k])
+		}
+	}
+	return b.String()
 }
 
 // Prometheus returns the complete set of metrics in Prometheus text format,
