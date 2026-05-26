@@ -138,10 +138,11 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		return nil
 	})
 
-	subs := make(map[string]func())
+	subs := make(map[string]sub)
 	defer func() {
-		for _, unsub := range subs {
-			unsub()
+		for _, sub := range subs {
+			sub.unsub()
+			close(sub.ch) // terminate the forwarding goroutine
 		}
 	}()
 
@@ -229,6 +230,12 @@ type Evt struct {
 	Kind string `json:"kind"`
 }
 
+// sub tracks an active subscription: its unregister callback and the event channel.
+type sub struct {
+	unsub func()
+	ch    chan core.Event
+}
+
 func errorCode(err error) int {
 	var pe *core.PosixError
 	if errors.As(err, &pe) {
@@ -248,7 +255,7 @@ func errorCode(err error) int {
 	return http.StatusInternalServerError
 }
 
-func (s *Server) processOp(conn *wsConn, subs map[string]func(), msg WsMsg, batch bool) (WsReply, bool) {
+func (s *Server) processOp(conn *wsConn, subs map[string]sub, msg WsMsg, batch bool) (WsReply, bool) {
 	reply := WsReply{Op: msg.Op, Path: msg.Path, SubID: msg.SubID}
 	switch msg.Op {
 	case "read":
@@ -322,17 +329,19 @@ func (s *Server) processOp(conn *wsConn, subs map[string]func(), msg WsMsg, batc
 			reply.Code = http.StatusBadRequest
 			break
 		}
-		if unsub, ok := subs[msg.SubID]; ok {
-			unsub()
+		if old, ok := subs[msg.SubID]; ok {
+			old.unsub()
+			close(old.ch)
 		}
 		ch := make(chan core.Event, 16)
 		subID := msg.SubID
-		subs[subID] = s.fs.RegisterNotifier(func(e core.Event) {
+		unsubFn := s.fs.RegisterNotifier(func(e core.Event) {
 			select {
 			case ch <- e:
 			default:
 			}
 		}, msg.Prefix)
+		subs[subID] = sub{unsub: unsubFn, ch: ch}
 		go func() {
 			for e := range ch {
 				conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
@@ -349,8 +358,9 @@ func (s *Server) processOp(conn *wsConn, subs map[string]func(), msg WsMsg, batc
 			reply.Code = http.StatusBadRequest
 			break
 		}
-		if unsub, ok := subs[msg.SubID]; ok {
-			unsub()
+		if sub, ok := subs[msg.SubID]; ok {
+			sub.unsub()
+			close(sub.ch) // terminate the forwarding goroutine
 			delete(subs, msg.SubID)
 		}
 	case "ping":
