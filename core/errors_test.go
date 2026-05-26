@@ -34,3 +34,47 @@ func TestMapProviderErrorTable(t *testing.T) {
 		}
 	}
 }
+
+func TestExtractErrno(t *testing.T) {
+	if got := ExtractErrno(nil); got != "" {
+		t.Fatalf("ExtractErrno(nil) = %q, want empty", got)
+	}
+	if got := ExtractErrno(errors.New("not posix")); got != EIO {
+		t.Fatalf("ExtractErrno(non-posix) = %q, want EIO", got)
+	}
+	if got := ExtractErrno(posix(ENOENT, OpRead, "/x", nil)); got != ENOENT {
+		t.Fatalf("ExtractErrno(ENOENT) = %q, want ENOENT", got)
+	}
+}
+
+func TestHTTPStatusFromError(t *testing.T) {
+	tests := []struct {
+		code Errno
+		want int
+	}{
+		{ENOENT, 404},
+		{EACCES, 403},
+		{EEXIST, 409},
+		{EINVAL, 400},
+		{ETIMEDOUT, 408},
+		{EBUSY, 503},
+		{EAGAIN, 503},
+		{ENOSPC, 507},
+		{ENOTDIR, 400},
+		{EISDIR, 400},
+		{ENOSYS, 501},
+		{ELOOP, 400},
+		{EIO, 500},
+		{ECOMM, 500},
+	}
+	for _, tc := range tests {
+		err := posix(tc.code, OpRead, "/x", nil)
+		if got := HTTPStatusFromError(err); got != tc.want {
+			t.Fatalf("HTTPStatusFromError(%s) = %d, want %d", tc.code, got, tc.want)
+		}
+	}
+	// Non-posix error defaults to 500.
+	if got := HTTPStatusFromError(errors.New("unknown")); got != 500 {
+		t.Fatalf("HTTPStatusFromError(non-posix) = %d, want 500", got)
+	}
+}

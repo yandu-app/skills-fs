@@ -2,7 +2,7 @@ package websocket
 
 import (
 	"context"
-	"errors"
+	"encoding/base64"
 	"fmt"
 	"net"
 	"net/http"
@@ -131,6 +131,9 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	s.conns.Add(1)
 	defer s.conns.Add(-1)
 
+	ctx := r.Context()
+	caller := s.callerFromRequest(r)
+
 	conn.SetReadLimit(64 * 1024) // 64 KiB max message size
 	conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 	conn.SetPongHandler(func(string) error {
@@ -185,7 +188,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 			}
 			results := make([]WsReply, 0, len(msg.Ops))
 			for _, sub := range msg.Ops {
-				r, _ := s.processOp(conn, subs, sub, true)
+				r, _ := s.processOp(ctx, conn, subs, sub, caller, true)
 				results = append(results, r)
 			}
 			conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
@@ -194,7 +197,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 			}
 			continue
 		}
-		reply, sent := s.processOp(conn, subs, msg, false)
+		reply, sent := s.processOp(ctx, conn, subs, msg, caller, false)
 		if sent || msg.Op == "pong" {
 			continue
 		}
@@ -237,29 +240,14 @@ type sub struct {
 }
 
 func errorCode(err error) int {
-	var pe *core.PosixError
-	if errors.As(err, &pe) {
-		switch pe.Code {
-		case core.ENOENT:
-			return http.StatusNotFound
-		case core.EACCES:
-			return http.StatusForbidden
-		case core.EEXIST:
-			return http.StatusConflict
-		case core.EINVAL:
-			return http.StatusBadRequest
-		case core.ETIMEDOUT:
-			return http.StatusRequestTimeout
-		}
-	}
-	return http.StatusInternalServerError
+	return core.HTTPStatusFromError(err)
 }
 
-func (s *Server) processOp(conn *wsConn, subs map[string]sub, msg WsMsg, batch bool) (WsReply, bool) {
+func (s *Server) processOp(ctx context.Context, conn *wsConn, subs map[string]sub, msg WsMsg, caller core.CallerIdentity, batch bool) (WsReply, bool) {
 	reply := WsReply{Op: msg.Op, Path: msg.Path, SubID: msg.SubID}
 	switch msg.Op {
 	case "read":
-		data, err := s.fs.Read(context.Background(), msg.Path, core.CallerIdentity{})
+		data, err := s.fs.Read(ctx, msg.Path, caller)
 		if err != nil {
 			reply.Error = err.Error()
 			reply.Code = errorCode(err)
@@ -272,12 +260,12 @@ func (s *Server) processOp(conn *wsConn, subs map[string]sub, msg WsMsg, batch b
 			reply.Code = http.StatusForbidden
 			break
 		}
-		if err := s.fs.Write(context.Background(), msg.Path, []byte(msg.Data), core.CallerIdentity{}); err != nil {
+		if err := s.fs.Write(ctx, msg.Path, []byte(msg.Data), caller); err != nil {
 			reply.Error = err.Error()
 			reply.Code = errorCode(err)
 		}
 	case "read-binary":
-		data, err := s.fs.Read(context.Background(), msg.Path, core.CallerIdentity{})
+		data, err := s.fs.Read(ctx, msg.Path, caller)
 		if err != nil {
 			reply.Error = err.Error()
 			reply.Code = errorCode(err)
@@ -303,7 +291,7 @@ func (s *Server) processOp(conn *wsConn, subs map[string]sub, msg WsMsg, batch b
 			break
 		}
 		if batch {
-			if err := s.fs.Write(context.Background(), msg.Path, []byte(msg.Data), core.CallerIdentity{}); err != nil {
+			if err := s.fs.Write(ctx, msg.Path, []byte(msg.Data), caller); err != nil {
 				reply.Error = err.Error()
 				reply.Code = errorCode(err)
 			}
@@ -319,7 +307,7 @@ func (s *Server) processOp(conn *wsConn, subs map[string]sub, msg WsMsg, batch b
 			reply.Code = http.StatusBadRequest
 			break
 		}
-		if err := s.fs.Write(context.Background(), msg.Path, payload, core.CallerIdentity{}); err != nil {
+		if err := s.fs.Write(ctx, msg.Path, payload, caller); err != nil {
 			reply.Error = err.Error()
 			reply.Code = errorCode(err)
 		}
@@ -372,4 +360,31 @@ func (s *Server) processOp(conn *wsConn, subs map[string]sub, msg WsMsg, batch b
 		reply.Code = http.StatusBadRequest
 	}
 	return reply, false
+}
+
+// callerFromRequest extracts CallerIdentity from the WebSocket upgrade request.
+// It supports Basic auth (username mapped to UID) and X-Caller-UID/GID headers.
+func (s *Server) callerFromRequest(r *http.Request) core.CallerIdentity {
+	// Try Basic auth first.
+	auth := r.Header.Get("Authorization")
+	if strings.HasPrefix(auth, "Basic ") {
+		decoded, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(auth, "Basic "))
+		if err == nil {
+			parts := strings.SplitN(string(decoded), ":", 2)
+			if len(parts) == 2 {
+				var uid uint32
+				fmt.Sscanf(parts[0], "%d", &uid)
+				return core.CallerIdentity{UID: uid, GID: uid}
+			}
+		}
+	}
+	// Fall back to explicit headers.
+	var caller core.CallerIdentity
+	if v := r.Header.Get("X-Caller-UID"); v != "" {
+		fmt.Sscanf(v, "%d", &caller.UID)
+	}
+	if v := r.Header.Get("X-Caller-GID"); v != "" {
+		fmt.Sscanf(v, "%d", &caller.GID)
+	}
+	return caller
 }

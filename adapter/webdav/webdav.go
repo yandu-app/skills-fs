@@ -9,7 +9,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"encoding/xml"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -729,13 +728,17 @@ func (s *Server) propfindResponseCached(p string, stat core.Stat, etagStr string
 	if stat.Kind == core.KindDir {
 		rt = &resourceType{Collection: ""}
 	}
+	modTime := stat.ModTime
+	if modTime.IsZero() {
+		modTime = time.Now()
+	}
 	pr := prop{
 		DisplayName:         path.Base(p),
 		GetContentLength:    stat.Size,
 		GetContentType:      contentTypeFromKind(stat.Kind),
 		ResourceType:        rt,
-		CreationDate:        time.Now().UTC().Format(time.RFC3339),
-		GetLastModified:     time.Now().UTC().Format(http.TimeFormat),
+		CreationDate:        modTime.UTC().Format(time.RFC3339),
+		GetLastModified:     modTime.UTC().Format(http.TimeFormat),
 		QuotaAvailableBytes: 1 << 62,
 		QuotaUsedBytes:      0,
 	}
@@ -848,23 +851,8 @@ func (s *Server) callerFromRequest(r *http.Request) core.CallerIdentity {
 }
 
 func (s *Server) writeError(w http.ResponseWriter, err error) {
-	var pe *core.PosixError
-	if errors.As(err, &pe) {
-		switch pe.Code {
-		case core.ENOENT:
-			http.Error(w, "not found", http.StatusNotFound)
-		case core.EACCES:
-			http.Error(w, "forbidden", http.StatusForbidden)
-		case core.EEXIST:
-			http.Error(w, "conflict", http.StatusConflict)
-		case core.EINVAL:
-			http.Error(w, "bad request", http.StatusBadRequest)
-		default:
-			http.Error(w, "internal error", http.StatusInternalServerError)
-		}
-		return
-	}
-	http.Error(w, "internal error", http.StatusInternalServerError)
+	code := core.HTTPStatusFromError(err)
+	http.Error(w, http.StatusText(code), code)
 }
 
 type gzipResponseWriter struct {
