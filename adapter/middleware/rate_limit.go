@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"net"
 	"net/http"
 	"strings"
@@ -8,12 +9,21 @@ import (
 	"time"
 )
 
+// bucketTTL is the duration after which an idle bucket is eligible for eviction.
+const bucketTTL = 10 * time.Minute
+
+// cleanupInterval is how often the background goroutine scans for stale buckets.
+const cleanupInterval = time.Minute
+
 // RateLimiter is a per-IP token bucket rate limiter.
 type RateLimiter struct {
 	mu       sync.RWMutex
 	buckets  map[string]*bucket
 	rate     float64 // tokens per second
 	capacity int     // max bucket size
+
+	startOnce sync.Once
+	stop      context.CancelFunc
 }
 
 type bucket struct {
@@ -32,7 +42,10 @@ func NewRateLimiter(rate float64, capacity int) *RateLimiter {
 }
 
 // Allow returns true if the request from the given IP is within rate limits.
+// On the first call it also starts a background cleanup goroutine.
 func (rl *RateLimiter) Allow(ip string) bool {
+	rl.startOnce.Do(rl.startCleanup)
+
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 
@@ -55,6 +68,37 @@ func (rl *RateLimiter) Allow(ip string) bool {
 	}
 	b.tokens--
 	return true
+}
+
+// startCleanup launches a background goroutine that periodically removes
+// stale buckets. It is called exactly once, on the first Allow invocation.
+func (rl *RateLimiter) startCleanup() {
+	ctx, cancel := context.WithCancel(context.Background())
+	rl.stop = cancel
+	go func() {
+		ticker := time.NewTicker(cleanupInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				rl.cleanup()
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+}
+
+// cleanup removes buckets that have not been accessed for longer than bucketTTL.
+func (rl *RateLimiter) cleanup() {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	now := time.Now()
+	for ip, b := range rl.buckets {
+		if now.Sub(b.lastCheck) > bucketTTL {
+			delete(rl.buckets, ip)
+		}
+	}
 }
 
 // RateLimit returns HTTP middleware that rate limits by client IP.
