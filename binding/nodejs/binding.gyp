@@ -6,12 +6,20 @@
       "include_dirs": [
         "<(module_root_dir)/lib"
       ],
-      "libraries": [
-        "-L<(module_root_dir)/lib",
-        "-lgobridge",
-        "-Wl,-rpath,\\$$ORIGIN/../../lib"
-      ],
-      "cflags": ["-Wall", "-Wextra", "-Wno-unused-parameter"]
+      "conditions": [
+        ["OS=='win'", {
+          "libraries": [
+            "<(module_root_dir)/lib/gobridge.lib"
+          ]
+        }, {
+          "libraries": [
+            "-L<(module_root_dir)/lib",
+            "-lgobridge",
+            "-Wl,-rpath,\\$$ORIGIN/../../lib"
+          ],
+          "cflags": ["-Wall", "-Wextra", "-Wno-unused-parameter"]
+        }]
+      ]
     }
   ]
 }
