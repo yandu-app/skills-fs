@@ -18,12 +18,39 @@ package main
 /*
 #include <stdint.h>
 #include <stdlib.h>
+
+// Callback type for host-provided providers.
+// action, params_json are UTF-8 strings. payload may be NULL.
+// On success, callback allocates *out_data with malloc and sets *out_len.
+// Returns 0 on success, -1 on error.
+typedef int (*skills_fs_provider_cb)(
+	uintptr_t handle,
+	const char* action,
+	const char* params_json,
+	const char* payload,
+	int payload_len,
+	char** out_data,
+	int* out_len
+);
+
+// Defined in callback.c — calls the function pointer since CGo can't do it directly.
+extern int skills_fs_provider_cb_call(
+	skills_fs_provider_cb cb,
+	uintptr_t handle,
+	const char* action,
+	const char* params_json,
+	const char* payload,
+	int payload_len,
+	char** out_data,
+	int* out_len
+);
 */
 import "C"
 
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"unsafe"
 
 	"github.com/skills-fs/skills-fs/binding/registry"
@@ -250,6 +277,62 @@ func skills_fs_write(handle C.uintptr_t, path *C.char, data *C.char, length C.in
 //export skills_fs_free
 func skills_fs_free(p unsafe.Pointer) {
 	C.free(p)
+}
+
+// callbackProvider wraps a C function pointer as a core.Provider.
+type callbackProvider struct {
+	id       string
+	handle   uintptr
+	callback C.skills_fs_provider_cb
+}
+
+func (p *callbackProvider) ID() string { return p.id }
+
+func (p *callbackProvider) Invoke(ctx context.Context, action string, params map[string]interface{}) (*core.ProviderResult, error) {
+	paramsJSON, err := json.Marshal(params)
+	if err != nil {
+		return nil, err
+	}
+
+	var outData *C.char
+	var outLen C.int
+
+	cAction := C.CString(action)
+	defer C.free(unsafe.Pointer(cAction))
+	cParams := C.CString(string(paramsJSON))
+	defer C.free(unsafe.Pointer(cParams))
+
+	rc := C.skills_fs_provider_cb_call(p.callback, C.uintptr_t(p.handle),
+		cAction, cParams,
+		nil, 0, &outData, &outLen)
+	if rc != 0 {
+		return nil, fmt.Errorf("provider %s: callback returned %d", p.id, rc)
+	}
+	defer C.free(unsafe.Pointer(outData))
+
+	return &core.ProviderResult{
+		Data: C.GoBytes(unsafe.Pointer(outData), outLen),
+	}, nil
+}
+
+//export skills_fs_register_provider
+func skills_fs_register_provider(handle C.uintptr_t, id *C.char, cb C.skills_fs_provider_cb) C.int {
+	h := uintptr(handle)
+	fs, ok := resolveFS(h)
+	if !ok {
+		return -1
+	}
+	provider := &callbackProvider{
+		id:       C.GoString(id),
+		handle:   h,
+		callback: cb,
+	}
+	if err := fs.RegisterProvider(provider); err != nil {
+		fail(h, err)
+		return -1
+	}
+	clear(h)
+	return 0
 }
 
 func main() {}
