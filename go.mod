@@ -8,4 +8,7 @@ require (
 	golang.org/x/net v0.54.0
 )
 
-require golang.org/x/sys v0.44.0 // indirect
+require (
+	github.com/winfsp/cgofuse v1.6.0 // indirect
+	golang.org/x/sys v0.44.0 // indirect
+)
