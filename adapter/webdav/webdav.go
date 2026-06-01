@@ -785,7 +785,7 @@ type prop struct {
 
 type resourceType struct {
 	XMLName    xml.Name `xml:"D:resourcetype"`
-	Collection string   `xml:"D:collection,omitempty"`
+	Collection string   `xml:"D:collection"`
 }
 
 // DASL search XML structures.
@@ -950,6 +950,10 @@ func sanitizePath(p string) string {
 	}
 	if p[0] != '/' {
 		return ""
+	}
+	// Strip trailing slash (rclone and Windows WebDAV clients send /path/)
+	if p != "/" && p[len(p)-1] == '/' {
+		p = p[:len(p)-1]
 	}
 	// Reject paths containing traversal or empty segments.
 	for _, seg := range strings.Split(p[1:], "/") {
