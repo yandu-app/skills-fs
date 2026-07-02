@@ -1,0 +1,15 @@
+LIBRARY gobridge
+EXPORTS
+    skills_fs_create
+    skills_fs_free
+    skills_fs_last_error
+    skills_fs_mount_api
+    skills_fs_mount_blob
+    skills_fs_read
+    skills_fs_readdir
+    skills_fs_rename
+    skills_fs_shutdown
+    skills_fs_stat
+    skills_fs_unmount
+    skills_fs_write
+    skills_fs_register_provider
