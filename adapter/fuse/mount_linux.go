@@ -103,12 +103,25 @@ func (r *rootNode) attr(out *fuse.AttrOut) syscall.Errno {
 
 func (r *rootNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
 	p := filepath.Join("/", name)
+	// Check cache first for stable inode numbers.
+	r.mu.RLock()
+	cached, ok := r.inodes[p]
+	r.mu.RUnlock()
+	if ok {
+		stat, err := r.fsys.Stat(p, core.CallerIdentity{})
+		if err != nil {
+			return nil, toErrno(err)
+		}
+		fillEntryOut(out, stat)
+		out.Ino = cached.StableAttr().Ino
+		return cached, fs.OK
+	}
 	stat, err := r.fsys.Stat(p, core.CallerIdentity{})
 	if err != nil {
 		return nil, toErrno(err)
 	}
 	mode := fileMode(stat)
-	node := &pathNode{path: p, fsys: r.fsys, readOnly: r.readOnly}
+	node := &pathNode{path: p, fsys: r.fsys, root: r, readOnly: r.readOnly}
 	ino := r.NewInode(ctx, node, fs.StableAttr{Mode: uint32(mode)})
 	fillEntryOut(out, stat)
 	out.Ino = ino.StableAttr().Ino
@@ -222,6 +235,7 @@ type pathNode struct {
 	fs.Inode
 	path     string
 	fsys     *core.FileSystem
+	root     *rootNode
 	readOnly bool
 }
 
@@ -256,15 +270,31 @@ func (n *pathNode) Getattr(ctx context.Context, f fs.FileHandle, out *fuse.AttrO
 
 func (n *pathNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
 	childPath := filepath.Join(n.path, name)
+	// Check cache first for stable inode numbers.
+	n.root.mu.RLock()
+	cached, ok := n.root.inodes[childPath]
+	n.root.mu.RUnlock()
+	if ok {
+		stat, err := n.fsys.Stat(childPath, core.CallerIdentity{})
+		if err != nil {
+			return nil, toErrno(err)
+		}
+		fillEntryOut(out, stat)
+		out.Ino = cached.StableAttr().Ino
+		return cached, fs.OK
+	}
 	stat, err := n.fsys.Stat(childPath, core.CallerIdentity{})
 	if err != nil {
 		return nil, toErrno(err)
 	}
 	mode := fileMode(stat)
-	child := &pathNode{path: childPath, fsys: n.fsys, readOnly: n.readOnly}
+	child := &pathNode{path: childPath, fsys: n.fsys, root: n.root, readOnly: n.readOnly}
 	ino := n.NewInode(ctx, child, fs.StableAttr{Mode: uint32(mode)})
 	fillEntryOut(out, stat)
 	out.Ino = ino.StableAttr().Ino
+	n.root.mu.Lock()
+	n.root.inodes[childPath] = ino
+	n.root.mu.Unlock()
 	return ino, fs.OK
 }
 
@@ -294,7 +324,7 @@ func (n *pathNode) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint3
 	if err != nil {
 		return nil, 0, toErrno(err)
 	}
-	fh := &fileHandle{h: h, fsys: n.fsys, ino: n.StableAttr().Ino}
+	fh := &fileHandle{h: h, fsys: n.fsys, ino: n.StableAttr().Ino, readOnly: n.readOnly}
 	return fh, fuse.FOPEN_KEEP_CACHE, fs.OK
 }
 
@@ -489,6 +519,18 @@ func toErrno(err error) syscall.Errno {
 	}
 }
 
+// getRoot extracts the rootNode from an InodeEmbedder (rootNode or pathNode).
+func getRoot(parent fs.InodeEmbedder) *rootNode {
+	switch p := parent.(type) {
+	case *rootNode:
+		return p
+	case *pathNode:
+		return p.root
+	default:
+		return nil
+	}
+}
+
 func createFile(ctx context.Context, fsys *core.FileSystem, parentPath, name string, flags uint32, mode uint32, out *fuse.EntryOut, parent fs.InodeEmbedder) (*fs.Inode, fs.FileHandle, uint32, syscall.Errno) {
 	childPath := filepath.Join(parentPath, name)
 	if err := fsys.Mount(childPath, core.MountEntry{Kind: core.KindBlob, Mode: mode & 0o777}); err != nil {
@@ -513,10 +555,17 @@ func createFile(ctx context.Context, fsys *core.FileSystem, parentPath, name str
 		return nil, nil, 0, toErrno(err)
 	}
 	fillEntryOut(out, stat)
-	node := &pathNode{path: childPath, fsys: fsys}
+	root := getRoot(parent)
+	ro := root.readOnly
+	node := &pathNode{path: childPath, fsys: fsys, root: root, readOnly: ro}
 	ino := parent.EmbeddedInode().NewInode(ctx, node, fs.StableAttr{Mode: syscall.S_IFREG | (mode & 0o777)})
 	out.Ino = ino.StableAttr().Ino
-	fh := &fileHandle{h: h, fsys: fsys, ino: ino.StableAttr().Ino}
+	fh := &fileHandle{h: h, fsys: fsys, ino: ino.StableAttr().Ino, readOnly: ro}
+	if root != nil {
+		root.mu.Lock()
+		root.inodes[childPath] = ino
+		root.mu.Unlock()
+	}
 	return ino, fh, fuse.FOPEN_KEEP_CACHE, fs.OK
 }
 
@@ -531,9 +580,16 @@ func mkdir(ctx context.Context, fsys *core.FileSystem, parentPath, name string, 
 		return nil, toErrno(err)
 	}
 	fillEntryOut(out, stat)
-	node := &pathNode{path: childPath, fsys: fsys}
+	root := getRoot(parent)
+	ro := root.readOnly
+	node := &pathNode{path: childPath, fsys: fsys, root: root, readOnly: ro}
 	ino := parent.EmbeddedInode().NewInode(ctx, node, fs.StableAttr{Mode: syscall.S_IFDIR | (mode & 0o777)})
 	out.Ino = ino.StableAttr().Ino
+	if root != nil {
+		root.mu.Lock()
+		root.inodes[childPath] = ino
+		root.mu.Unlock()
+	}
 	return ino, fs.OK
 }
 
@@ -580,8 +636,15 @@ func symlink(ctx context.Context, fsys *core.FileSystem, parentPath, target, nam
 		return nil, toErrno(err)
 	}
 	fillEntryOut(out, stat)
-	node := &pathNode{path: childPath, fsys: fsys}
+	root := getRoot(parent)
+	ro := root.readOnly
+	node := &pathNode{path: childPath, fsys: fsys, root: root, readOnly: ro}
 	ino := parent.EmbeddedInode().NewInode(ctx, node, fs.StableAttr{Mode: syscall.S_IFLNK | 0o777})
 	out.Ino = ino.StableAttr().Ino
+	if root != nil {
+		root.mu.Lock()
+		root.inodes[childPath] = ino
+		root.mu.Unlock()
+	}
 	return ino, fs.OK
 }
