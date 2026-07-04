@@ -272,30 +272,46 @@ func (fs *FileSystem) Mount(p string, entry MountEntry) (err error) {
 			_, _ = fs.router.remove(path)
 			return err
 		}
-		if mounted.Skill.ExposeAtRoot {
-			data, err := fs.skills.ReadSkillFile(mounted.Skill.Name)
-			if err != nil {
-				return err
-			}
-			rootEntry := MountEntry{
-				Path:     "/SKILL.md",
-				Kind:     KindBlob,
-				Mode:     0o444,
-				BlobData: data,
-				UID:      fs.cfg.DefaultUID,
-				GID:      fs.cfg.DefaultGID,
-			}
-			if _, err := fs.router.add(rootEntry); err != nil {
-				return err
-			}
-			fs.events.emit(Event{Path: "/SKILL.md", Kind: EventCreate})
+		if err := fs.MountSkillAtRoot(*mounted.Skill); err != nil {
+			_, _ = fs.router.remove(path)
+			return err
 		}
 	}
 	fs.events.emit(Event{Path: path, Kind: EventCreate})
 	return nil
 }
 
-// Unmount removes a mounted node and invalidates its cached stat.
+// MountSkillAtRoot mounts a generated skill's SKILL.md at /SKILL.md in the
+// virtual filesystem when cfg.ExposeAtRoot is true. The skill must already be
+// generated (e.g. by fs.Skills().Generate).
+func (fs *FileSystem) MountSkillAtRoot(cfg SkillConfig) error {
+	if !cfg.ExposeAtRoot {
+		return nil
+	}
+	data, err := fs.skills.ReadSkillFile(cfg.Name)
+	if err != nil {
+		return err
+	}
+	rootEntry := MountEntry{
+		Path:     "/SKILL.md",
+		Kind:     KindBlob,
+		Mode:     0o444,
+		BlobData: data,
+		UID:      fs.cfg.DefaultUID,
+		GID:      fs.cfg.DefaultGID,
+	}
+	if _, err := fs.router.add(rootEntry); err != nil {
+		return err
+	}
+	fs.events.emit(Event{Path: "/SKILL.md", Kind: EventCreate})
+	return nil
+}
+
+// UnmountSkillAtRoot removes the /SKILL.md mount created by MountSkillAtRoot.
+func (fs *FileSystem) UnmountSkillAtRoot() error {
+	_, err := fs.router.remove("/SKILL.md")
+	return err
+}
 func (fs *FileSystem) Unmount(p string) (err error) {
 	done := fs.audit("unmount", p, CallerIdentity{})
 	defer func() { done(err) }()

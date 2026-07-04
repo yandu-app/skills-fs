@@ -61,6 +61,9 @@ func (c *Config) BuildFS() (*core.FileSystem, error) {
 		if err := fs.Skills().Generate(sc); err != nil {
 			return nil, fmt.Errorf("generate skill %s: %w", sc.Name, err)
 		}
+		if err := fs.MountSkillAtRoot(sc); err != nil {
+			return nil, fmt.Errorf("mount skill %s at root: %w", sc.Name, err)
+		}
 	}
 
 	for _, pc := range c.Providers {
