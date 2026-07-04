@@ -1,68 +1,218 @@
 # skills-fs
 
-Embedded virtual filesystem engine for exposing host application capabilities and Agent Skills as ordinary files.
+Virtual filesystem engine for exposing application capabilities and Agent
+Skills as files.
 
-## Current Status
+[中文](README.zh.md)
 
-M2/M3/M4/M5 complete. The repository contains:
+---
 
-- **Core**: radix-tree routing, POSIX permissions, provider dispatch, POSIX error mapping, sharded handle manager, advisory flock, write buffering, stream ring buffers with backpressure (block/drop/error), event bus, Prometheus metrics, skill generator, provider result cache, namespace isolation.
-- **FUSE adapter**: Linux implementation using `go-fuse/v2` with inotify forwarding. Build-tagged stub for other platforms.
-- **WebDAV adapter**: full HTTP server with GET, HEAD, PUT, PROPFIND, OPTIONS, COPY, MOVE, LOCK, Basic Auth, TLS, gzip, CORS, rate limiting, ETags, Range requests, conditional COPY/MOVE, property caching, and `/metrics` endpoint.
-- **WebSocket adapter**: streaming filesystem operations over WebSocket with JSON and binary messages, per-message deflate compression, batch operations, subscription IDs, ping/pong keepalive, and `/metrics` endpoint.
-- **HTTP provider bridge**: `provider/http` package forwards Invoke calls to remote HTTP endpoints with retry and circuit breaker.
-- **CLI**: `cmd/skills-fs` with `webdav`, `websocket`, `fuse`, `validate`, and `version` commands, JSON config file support, SIGHUP config reload.
-- **Host bindings**: Node.js N-API and Python ctypes wrappers around the same C shared library (`libgobridge.so`) generated from the Go core.
-- **Tests**: `core` package at >91% statement coverage; total coverage >85%. Fuzz tests for router and path normalization.
-- **Benchmarks**: path resolution, stat, write, lock contention, serial queue, event emit, stream read/write, handle open/close, HTTP provider roundtrip.
-- **CI gates**: format, lint, unit tests, race detector, coverage (85%), vulnerability scan, cross-platform build (linux/darwin/windows), cross-platform test (macOS/Windows), benchmark smoke, benchmark regression gate (benchstat), Node binding, Python binding.
+skills-fs is a Go library and CLI that turns application capabilities into a
+virtual filesystem. Read a file to query data. Write to a file to perform an
+action. List a directory to discover what's available. Every filesystem
+operation is dispatched to a provider — local code, a remote HTTP endpoint,
+or a stream — through a radix-tree router with POSIX semantics.
 
-## Quick Start
+---
 
-```sh
-go test ./...
-go test ./bench -bench .
-make coverage
-make race
+## What It Does
+
+AI agents interact best with flat, discoverable interfaces. A filesystem is
+that interface: `cat` to read, `>` to write, `ls` to explore. skills-fs makes
+any application capability — a bot API, a database query, a live event stream
+— available through these primitives, so agents need only filesystem knowledge
+to operate.
+
+Example: NapCat QQ Bot → filesystem
+
+```bash
+cat napcat/events           # read recent messages
+echo '{"group_id":123,"message":"hello"}' > napcat/send_group  # send message
+cat napcat/status           # check bot status
 ```
 
-## CLI Usage
+---
 
-```sh
-# Start WebDAV server
-go run ./cmd/skills-fs webdav -addr :8080
+## Overview
 
-# Start WebSocket server
-go run ./cmd/skills-fs websocket -addr :8081
+### Mount Kinds
 
-# Start with a config file
-go run ./cmd/skills-fs webdav -config config.json
+Each node in the virtual filesystem is a mount entry with a kind:
 
-# Validate config without starting server
-go run ./cmd/skills-fs validate -config config.json
+| Kind | Description | Example |
+|------|-------------|---------|
+| Blob | Static file with inline content. Read-only. | `/SKILL.md`, `/AGENTS.md` |
+| API | Content produced by provider `read` action; writes forwarded as provider `write` action. Optional JSON payload forwarding (`writeParams: "json"`). | `napcat/send_group`, `napcat/events` |
+| Dir | Static directory containing nested mounts. | `/napcat/`, `/napcat/groups/` |
+| DynamicDir | Provider-backed directory. On `readdir`, invokes a provider action that returns JSON entries. Entries matched against registered mounts to determine kind. | `groups/{group_id}/`, `friends/{user_id}/` |
+| Stream | Bounded ring buffer. Supports `block`, `drop`, or `error` backpressure. Multiple handles share one buffer (FIFO semantics). | `napcat/events`, `napcat/alerts` |
+| Link | Symbolic link to another mount path. | `/my-skill -> /skills/real-skill` |
 
-# Example config.json
+### Key Features
+
+- Radix-tree router: fast prefix matching for path resolution.
+- Sharded handles: 16-map sharding for concurrent open/read/write.
+- Advisory flock: per-path shared/exclusive locks, auto-released on close.
+- Serial queue: per-mount serialization prevents race conditions while allowing cross-path concurrency.
+- Write buffering: payloads coalesced until size threshold, delay, or newline triggers flush.
+- Event bus: create/write/remove broadcast with path prefix filtering.
+- Provider cache: TTL-based `(action, params)` cache per mount.
+- Prometheus metrics: `/metrics` endpoint on WebDAV and WebSocket servers.
+
+---
+
+## Adapters
+
+Three transport layers let skills-fs reach any client:
+
+- FUSE (Linux) — native mount via `go-fuse/v2`. Includes inotify forwarding.
+- WebDAV — full HTTP server with Basic Auth, TLS, gzip, CORS, rate limiting, ETags, Range requests, property caching.
+- WebSocket — streaming operations, JSON/binary messages, per-message deflate (RFC 7692), subscription IDs for event watching.
+
+---
+
+## Providers
+
+- HTTP provider — forwards `Invoke` calls to a remote HTTP endpoint as
+  JSON POST requests (`{ "action": "...", "params": {...} }`). Configurable
+  retry with exponential backoff and jitter; circuit breaker on consecutive
+  failures.
+
+- Local provider — executes in-process Go functions.
+
+---
+
+## Host Bindings
+
+skills-fs compiles to a C shared library (`libgobridge.so`) via Go's cgo
+export mechanism. Callers use dense, monotonic `uintptr` handles — no pointer
+management required.
+
+| Binding | Technology | Interface |
+|---------|-----------|-----------|
+| Python | ctypes | `skills_fs.py` — object-oriented wrapper |
+| Node.js | N-API (node-addon-api) | `index.js` — async methods, `path()` calls |
+| Go | Direct import | `github.com/skills-fs/skills-fs/core` |
+
+---
+
+## Skills System
+
+A Skill is a declarative bundle that generates filesystem mounts from a
+template. Skills define their capabilities, documentation, and agent
+guidance — then skills-fs generates the actual mount structure at runtime.
+
+```json
 {
-  "mounts": [
-    {"path": "/hello", "kind": "blob", "mode": "0644", "data": "world"},
-    {"path": "/api", "kind": "api", "read": "greet", "provider": "remote"}
-  ],
-  "providers": [
-    {"id": "remote", "url": "http://localhost:9000"}
-  ]
+  "name": "napcat-cli",
+  "description": "NapCat QQ bot messaging",
+  "bodyTemplate": "# NapCat CLI Skill\n\nAccess QQ bot via filesystem...",
+  "agentsTemplate": "# Agent Guide\n\n## Daemon requirements...",
+  "exposeAtRoot": true,
+  "allowedTools": ["read_file", "write_file", "list_directory"]
 }
 ```
 
-Signals:
-- `SIGINT` / `SIGTERM`: graceful shutdown
-- `SIGHUP`: reload configuration file (webdav / websocket commands)
+The Skill generator writes a `SKILL.md` to disk (YAML frontmatter + template
+body) and optionally an `AGENTS.md` with agent-specific guidance. When
+`exposeAtRoot` is true, these files are also mounted at `/SKILL.md` and
+`/AGENTS.md` in the virtual filesystem.
 
-Metrics:
-- Prometheus text format at `/metrics` on both WebDAV and WebSocket servers
+### Example: NapCat CLI Integration
 
-## Config Includes
+The [napcat-cli](https://github.com/cyjin-yl/napcat-cli) project demonstrates
+a complete skills-fs integration:
 
-Multiple skills can share one skills-fs instance without conflicting over a single global config file. The top-level config supports an `includes` array that loads and merges additional config files. Include paths are resolved relative to the parent config file's directory.
+1. Watch daemon (`daemon/watch.py`) connects to NapCat's WebSocket,
+   writes events to disk, and runs an HTTP server implementing the
+   skills-fs provider contract.
+
+2. skills-fs config (`skills-fs-config.json`) declares the provider
+   URL (`http://127.0.0.1:18821/invoke`) and includes a fragment file
+   (`skills-fs-fragment.json`) with the full mount tree for napcat-cli.
+
+3. Fragment file defines dozens of mounts: `napcat/send_group`,
+   `napcat/events`, `napcat/groups/{group_id}/{time_range}/{message_id}`, etc.
+   Dynamic directories let agents browse message history by group and time range.
+
+4. FUSE mount makes all paths available as real filesystem paths to
+   the AI agent, which interacts using only `cat`, `ls`, and `echo >`.
+
+---
+
+## Quick Start
+
+### Go Library
+
+```go
+import "github.com/skills-fs/skills-fs/core"
+
+fs, _ := core.NewFileSystem(core.Config{
+    MaxOpenHandles: 1024,
+    DefaultUID:     1000,
+    DefaultGID:     1000,
+})
+fs.Mount(core.MountEntry{
+    Path: "/hello",
+    Kind: core.KindBlob,
+    Mode: 0o644,
+    BlobData: []byte("world"),
+})
+data, _ := fs.OpenRead("/hello")
+```
+
+### CLI
+
+```bash
+go run ./cmd/skills-fs webdav -addr :8080
+go run ./cmd/skills-fs websocket -addr :8081
+go run ./cmd/skills-fs fuse -mountpoint /tmp/skills-fs
+go run ./cmd/skills-fs webdav -config config.json
+go run ./cmd/skills-fs validate -config config.json
+```
+
+### Python
+
+```python
+from skills_fs import SkillsFs
+import json
+
+cfg = json.loads(open("config.json").read())
+fs = SkillsFs(cfg)
+print(fs.read("/hello"))  # b"world"
+```
+
+### Node.js
+
+```javascript
+const SkillsFs = require("skills-fs");
+
+const fs = new SkillsFs(require("./config.json"));
+console.log(fs.read("/hello").toString()); // "world"
+```
+
+---
+
+## Configuration
+
+The config file is JSON with these top-level keys:
+
+| Key | Description |
+|-----|-------------|
+| `providers` | Array of provider definitions (id, url). |
+| `mounts` | Array of mount entries (path, kind, mode, read/write actions, provider). |
+| `skills` | Array of skill definitions. |
+| `skillsRoot` | Directory where skill `SKILL.md` files are generated. |
+| `includes` | Additional config files to merge (resolved relative to parent). |
+| `defaultUID` / `defaultGID` | Default ownership for generated mounts. |
+| `maxOpenHandles` | Handle budget (default: 1024). |
+| `lockTimeout` | Advisory lock timeout (default: 30s). |
+| `serialQueue` | Per-mount serial queue size (default: 1). |
+
+### Config Includes
+
+Multiple skills can share one skills-fs instance without a single global
+config. The `includes` array loads and merges additional config files:
 
 ```json
 {
@@ -72,58 +222,59 @@ Multiple skills can share one skills-fs instance without conflicting over a sing
 }
 ```
 
-Each included fragment can define its own `skills` and `mounts`. Providers are typically declared in the central config so they can be reused by multiple fragments, or in the fragment if they are private.
+### Signals
 
-## Mount Kinds
+- `SIGINT` / `SIGTERM`: graceful shutdown
+- `SIGHUP`: reload configuration file (webdav / websocket commands)
 
-- **blob** — static file with inline content.
-- **api** — file whose content is produced by a provider `read` action; writes can be forwarded as provider `write` actions (with optional JSON payload forwarding via `writeParams: "json"`).
-- **dir** — static directory containing nested mounts.
-- **dynamic_dir** — provider-backed directory. On `readdir`, the configured `read` action is invoked and the returned JSON entries are rendered as directory contents. This lets agents `cd` into hierarchies whose entries are not known at config time (e.g. `groups/:group_id/:time_range/:message_id`). Each dynamic entry is matched against existing mounts to determine its kind.
-- **stream** — bounded ring buffer for streaming data.
-- **link** — symbolic link.
+### Metrics
 
-Dynamic directory provider response formats:
+Prometheus text format at `/metrics` on WebDAV and WebSocket servers.
 
-```json
-["entry1", "entry2"]
-```
-
-or
-
-```json
-{"entries": [{"name": "entry1", "kind": "dynamic_dir", "mode": "0755"}, {"name": "entry2", "kind": "api"}]}
-```
-
-`kind` is optional; when omitted it is inferred from any registered mount at the child path.
-
-## Agent Guidance (AGENTS.md)
-
-- `SkillConfig.AgentsTemplate` generates an `AGENTS.md` file in the skill directory alongside `SKILL.md`. When `ExposeAtRoot` is true, the generated `AGENTS.md` is also exposed at `/AGENTS.md` in the virtual filesystem.
-- Every `dir` and `dynamic_dir` mount must include a child `AGENTS.md` blob mount explaining the directory's purpose. `skills-fs validate` enforces this.
-- To opt out of the `AGENTS.md` requirement for a specific directory, set `"agents": false` on that mount.
-- `AGENTS.md` files are intended to let agents navigate provider-backed filesystems without guessing.
+---
 
 ## Development
 
-```sh
-make all      # lint + test + vulncheck
-make quick    # fmt + vet + core/registry/provider tests (fast)
-make ci       # fmt + lint + test + coverage + race + vulncheck + bench (full)
-make lint     # go vet + staticcheck
-make test     # run all tests
-make race     # run core tests with race detector
-make coverage # check core coverage against 85% gate
-make vulncheck# scan dependencies for vulnerabilities
-make bench         # run benchmarks
-make bench-gate    # compare benchmarks against baseline (benchstat)
-make gen-docs      # regenerate API reference docs
-make binding-node  # build Node.js N-API addon
-make binding-python# build Python ctypes module
-make clean         # remove build artifacts
+```bash
+make all            # lint + test + vulncheck
+make quick          # fmt + vet + core/registry/provider tests (fast)
+make ci             # fmt + lint + test + coverage + race + vulncheck + bench (full)
+make lint           # go vet + staticcheck
+make test           # run all tests
+make race           # core tests with race detector
+make coverage       # check core coverage against 85% gate
+make vulncheck      # scan dependencies for vulnerabilities
+make bench          # run benchmarks
+make bench-gate     # compare benchmarks against baseline (benchstat)
+make gen-docs       # regenerate API reference docs
+make binding-node   # build Node.js N-API addon
+make binding-python # build Python ctypes module
+make clean          # remove build artifacts
 ```
 
-## Design Documents
+- `core` package: >91% statement coverage; total >85%.
+- Fuzz tests for router and path normalization.
+- Benchmarks: path resolution, stat, write, lock contention, serial queue,
+  event emit, stream read/write, handle open/close, HTTP provider roundtrip.
+
+---
+
+## Documentation
+
+### API Reference
+
+Generated from source. Located in [`docs/api/`](docs/api/):
+
+- [core](docs/api/core.md) — FileSystem, MountEntry, Handle, Config, events, locks, streams, metrics, skills
+- [adapter](docs/api/adapter.md) — MountOptions, adapter interface
+- [adapter/fuse](docs/api/adapter_fuse.md)
+- [adapter/webdav](docs/api/adapter_webdav.md)
+- [adapter/websocket](docs/api/adapter_websocket.md)
+- [provider/http](docs/api/provider_http.md)
+- [provider/local](docs/api/provider_local.md)
+- [provider/cache](docs/api/provider_cache.md)
+
+### Design Documents
 
 - [Development handoff](docs/DEVELOPMENT_HANDOFF.md)
 - [Architecture](docs/ARCHITECTURE.md)
