@@ -66,7 +66,7 @@ Multiple skills can share one skills-fs instance without conflicting over a sing
 
 ```json
 {
-  "skillsRoot": "/home/ezra/.hermes/skills",
+  "skillsRoot": "$HOME/.hermes/skills",
   "providers": [{"id": "napcat", "url": "http://127.0.0.1:18821/invoke"}],
   "includes": ["skills-fs.d/napcat-cli.json"]
 }
