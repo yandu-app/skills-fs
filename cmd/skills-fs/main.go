@@ -325,7 +325,8 @@ func cmdFUSE(args []string) int {
 	if err := server.Mount(context.Background()); err != nil {
 		slog.Error("mount", "err", err)
 		return 1
-	}
+}
+	fmt.Fprintln(os.Stderr, "DEBUG: mount succeeded, waiting for signal")
 	slog.Info("fuse mounted", "path", server.MountPoint())
 
 	sigCh := make(chan os.Signal, 1)
