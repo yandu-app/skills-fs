@@ -60,6 +60,20 @@ Signals:
 Metrics:
 - Prometheus text format at `/metrics` on both WebDAV and WebSocket servers
 
+## Config Includes
+
+Multiple skills can share one skills-fs instance without conflicting over a single global config file. The top-level config supports an `includes` array that loads and merges additional config files. Include paths are resolved relative to the parent config file's directory.
+
+```json
+{
+  "skillsRoot": "/home/ezra/.hermes/skills",
+  "providers": [{"id": "napcat", "url": "http://127.0.0.1:18821/invoke"}],
+  "includes": ["skills-fs.d/napcat-cli.json"]
+}
+```
+
+Each included fragment can define its own `skills` and `mounts`. Providers are typically declared in the central config so they can be reused by multiple fragments, or in the fragment if they are private.
+
 ## Mount Kinds
 
 - **blob** — static file with inline content.
@@ -85,7 +99,10 @@ or
 
 ## Agent Guidance (AGENTS.md)
 
-A planned enhancement is per-directory `AGENTS.md` files. When present in a directory (static or dynamic), skills-fs will expose an `AGENTS.md` file that describes the directory's purpose, available subdirectories, and parameter options. This gives agents explicit hints so they can navigate provider-backed filesystems without guessing.
+- `SkillConfig.AgentsTemplate` generates an `AGENTS.md` file in the skill directory alongside `SKILL.md`. When `ExposeAtRoot` is true, the generated `AGENTS.md` is also exposed at `/AGENTS.md` in the virtual filesystem.
+- Every `dir` and `dynamic_dir` mount must include a child `AGENTS.md` blob mount explaining the directory's purpose. `skills-fs validate` enforces this.
+- To opt out of the `AGENTS.md` requirement for a specific directory, set `"agents": false` on that mount.
+- `AGENTS.md` files are intended to let agents navigate provider-backed filesystems without guessing.
 
 ## Development
 
