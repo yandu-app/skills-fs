@@ -150,6 +150,35 @@ func TestFileHandleSetattrAPI(t *testing.T) {
 	}
 }
 
+func TestPathNodeSetattrAPI(t *testing.T) {
+	fsys := core.NewFS(core.GlobalConfig{})
+	if err := fsys.RegisterProvider(&staticProvider{data: []byte(`{"ok":true}`)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := fsys.Mount("/api", core.MountEntry{
+		Kind: core.KindAPI,
+		Mode: 0o444,
+		Ops: map[core.OpCode]*core.CapConfig{
+			core.OpRead: {ProviderID: "static", Action: "get"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	node := &pathNode{path: "/api", fsys: fsys}
+
+	var in fuse.SetAttrIn
+	in.Valid = fuse.FATTR_SIZE
+	in.Size = 0
+	var out fuse.AttrOut
+	errno := node.Setattr(context.Background(), nil, &in, &out)
+	if errno != fs.OK {
+		t.Fatalf("expected OK for API size setattr on node, got errno=%d", errno)
+	}
+	if out.Size != 1024*1024 {
+		t.Fatalf("expected API placeholder size, got %d", out.Size)
+	}
+}
+
 type staticProvider struct {
 	data []byte
 }
