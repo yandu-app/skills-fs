@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -42,6 +43,8 @@ func main() {
 		os.Exit(cmdWebSocket(os.Args[2:]))
 	case "fuse":
 		os.Exit(cmdFUSE(os.Args[2:]))
+	case "stop":
+		os.Exit(cmdStop(os.Args[2:]))
 	case "validate":
 		os.Exit(cmdValidate(os.Args[2:]))
 	case "health":
@@ -60,6 +63,7 @@ func usage() {
 	fmt.Fprintf(os.Stderr, "  webdav    Start WebDAV server\n")
 	fmt.Fprintf(os.Stderr, "  websocket Start WebSocket server\n")
 	fmt.Fprintf(os.Stderr, "  fuse      Mount FUSE filesystem (Linux only)\n")
+	fmt.Fprintf(os.Stderr, "  stop      Stop a running daemon by pidfile\n")
 	fmt.Fprintf(os.Stderr, "  validate  Validate configuration file\n")
 	fmt.Fprintf(os.Stderr, "  health    Check server health endpoint\n")
 	fmt.Fprintf(os.Stderr, "  version   Print version\n")
@@ -340,6 +344,58 @@ func cmdFUSE(args []string) int {
 	}
 	fsys.Shutdown(context.Background())
 	return 0
+}
+
+func cmdStop(args []string) int {
+	fs := flag.NewFlagSet("stop", flag.ExitOnError)
+	pidfile := fs.String("pidfile", "", "Path to PID file")
+	mountpoint := fs.String("mountpoint", "", "FUSE mount point to unmount first (Linux only)")
+	_ = fs.Parse(args)
+
+	if *pidfile == "" {
+		fmt.Fprintln(os.Stderr, "Usage: skills-fs stop -pidfile <path> [-mountpoint <path>]")
+		return 1
+	}
+
+	data, err := os.ReadFile(*pidfile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "read pidfile: %v\n", err)
+		return 1
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "parse pidfile: %v\n", err)
+		return 1
+	}
+
+	// For FUSE daemons, unmount the filesystem before sending SIGTERM so any
+	// process currently blocked on a FUSE request is released before the
+	// userspace daemon goes away. This prevents D-state stuck processes.
+	if runtime.GOOS == "linux" && *mountpoint != "" {
+		_ = syscall.Unmount(*mountpoint, 0)
+	}
+
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "find process: %v\n", err)
+		return 1
+	}
+	if err := proc.Signal(syscall.SIGTERM); err != nil {
+		fmt.Fprintf(os.Stderr, "send SIGTERM: %v\n", err)
+		return 1
+	}
+
+	// Wait briefly for graceful exit.
+	for range 50 {
+		if err := proc.Signal(syscall.Signal(0)); err != nil {
+			fmt.Printf("stopped pid=%d\n", pid)
+			_ = os.Remove(*pidfile)
+			return 0
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	fmt.Fprintf(os.Stderr, "pid %d did not exit within 5s; try -9 or check logs\n", pid)
+	return 1
 }
 
 func cmdValidate(args []string) int {

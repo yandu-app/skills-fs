@@ -21,6 +21,11 @@ type linuxState struct {
 }
 
 func (s *Server) Mount(ctx context.Context) error {
+	// Remove any stale FUSE mount from a previous crashed daemon. A stale mount
+	// with a dead userspace connection would otherwise block new mounts and pin
+	// any process accessing it in D-state.
+	_ = syscall.Unmount(s.mountPoint, 0)
+
 	opts := &fs.Options{
 		MountOptions: fuse.MountOptions{
 			Name:          "skillsfs",
@@ -63,8 +68,17 @@ func (s *Server) Unmount(ctx context.Context) error {
 	go func() { done <- st.srv.Unmount() }()
 	select {
 	case err := <-done:
+		// Even if the server unmount succeeded, ask the kernel to drop the
+		// mount again so any remaining in-flight request gets an answer and
+		// processes stuck in D-state can wake up.
+		if unmountErr := syscall.Unmount(s.mountPoint, 0); unmountErr != nil && err == nil {
+			return unmountErr
+		}
 		return err
 	case <-ctx.Done():
+		// If the server is wedged, force a kernel unmount to abort pending
+		// requests and avoid leaving other processes in D-state.
+		_ = syscall.Unmount(s.mountPoint, 0)
 		return ctx.Err()
 	}
 }
