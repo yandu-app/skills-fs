@@ -54,6 +54,8 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, err
 	}
 
+	cfg.expandEnv()
+
 	baseDir := filepath.Dir(path)
 	seen := map[string]bool{path: true}
 	for _, inc := range cfg.Includes {
@@ -76,6 +78,55 @@ func LoadConfig(path string) (*Config, error) {
 	cfg.Includes = nil // merged; no need to keep them
 
 	return &cfg, nil
+}
+
+// expandEnv expands $VAR and ${VAR} references in all string fields so
+// configuration files can be portable across machines and users.
+func (c *Config) expandEnv() {
+	c.SkillsRoot = os.ExpandEnv(c.SkillsRoot)
+	for i := range c.Includes {
+		c.Includes[i] = os.ExpandEnv(c.Includes[i])
+	}
+	for i := range c.Providers {
+		c.Providers[i].URL = os.ExpandEnv(c.Providers[i].URL)
+	}
+	for i := range c.Mounts {
+		m := &c.Mounts[i]
+		m.Path = os.ExpandEnv(m.Path)
+		m.Mode = os.ExpandEnv(m.Mode)
+		m.Data = os.ExpandEnv(m.Data)
+		m.Link = os.ExpandEnv(m.Link)
+		m.Provider = os.ExpandEnv(m.Provider)
+		m.Read = os.ExpandEnv(m.Read)
+		m.Write = os.ExpandEnv(m.Write)
+		m.WriteParams = os.ExpandEnv(m.WriteParams)
+	}
+	for i := range c.Skills {
+		s := &c.Skills[i]
+		s.Name = os.ExpandEnv(s.Name)
+		s.Description = os.ExpandEnv(s.Description)
+		s.Version = os.ExpandEnv(s.Version)
+		s.Author = os.ExpandEnv(s.Author)
+		s.License = os.ExpandEnv(s.License)
+		s.Compatibility = os.ExpandEnv(s.Compatibility)
+		for j := range s.Platforms {
+			s.Platforms[j] = os.ExpandEnv(s.Platforms[j])
+		}
+		for k, v := range s.Metadata {
+			s.Metadata[k] = os.ExpandEnv(v)
+		}
+		for j := range s.AllowedTools {
+			s.AllowedTools[j] = os.ExpandEnv(s.AllowedTools[j])
+		}
+		s.BodyTemplate = os.ExpandEnv(s.BodyTemplate)
+		s.AgentsTemplate = os.ExpandEnv(s.AgentsTemplate)
+		for j := range s.Scripts {
+			s.Scripts[j] = os.ExpandEnv(s.Scripts[j])
+		}
+		for j := range s.References {
+			s.References[j] = os.ExpandEnv(s.References[j])
+		}
+	}
 }
 
 // BuildFS creates a FileSystem from the config, registering providers and
