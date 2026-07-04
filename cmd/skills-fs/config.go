@@ -141,6 +141,14 @@ func (mc *MountConfig) toMountEntry() (core.MountEntry, error) {
 		kind = core.KindAPI
 	case "dir":
 		kind = core.KindDir
+		if mc.Mode == "" {
+			mode = uint32(0o755)
+		}
+	case "dynamic_dir":
+		kind = core.KindDynamicDir
+		if mc.Mode == "" {
+			mode = uint32(0o755)
+		}
 	case "link":
 		kind = core.KindLink
 	case "stream":
@@ -179,7 +187,7 @@ func (mc *MountConfig) toMountEntry() (core.MountEntry, error) {
 					if len(payload) > 0 {
 						var body map[string]interface{}
 						if err := json.Unmarshal(payload, &body); err != nil {
-							return nil, err
+							return nil, fmt.Errorf("write to %s expects a valid JSON object; got %q: %w", mc.Path, string(payload), err)
 						}
 						for k, v := range body {
 							params[k] = v
@@ -190,6 +198,17 @@ func (mc *MountConfig) toMountEntry() (core.MountEntry, error) {
 			}
 			entry.Ops[core.OpWrite] = writeCap
 		}
+		entry.Serial = mc.Serial
+	case core.KindDynamicDir:
+		entry.Ops = make(map[core.OpCode]*core.CapConfig)
+		pid := mc.Provider
+		if pid == "" {
+			pid = "remote"
+		}
+		if mc.Read == "" {
+			return core.MountEntry{}, fmt.Errorf("dynamic_dir mount %q requires a read action", mc.Path)
+		}
+		entry.Ops[core.OpRead] = &core.CapConfig{ProviderID: pid, Action: mc.Read}
 		entry.Serial = mc.Serial
 	}
 

@@ -10,11 +10,12 @@ import (
 type NodeKind string
 
 const (
-	KindBlob   NodeKind = "blob"
-	KindAPI    NodeKind = "api"
-	KindStream NodeKind = "stream"
-	KindDir    NodeKind = "dir"
-	KindLink   NodeKind = "link"
+	KindBlob       NodeKind = "blob"
+	KindAPI        NodeKind = "api"
+	KindStream     NodeKind = "stream"
+	KindDir        NodeKind = "dir"
+	KindDynamicDir NodeKind = "dynamic_dir"
+	KindLink       NodeKind = "link"
 )
 
 // OpCode identifies a filesystem operation for capability checks and error reporting.
@@ -163,7 +164,7 @@ type MountEntry struct {
 
 func (e MountEntry) Validate() error {
 	switch e.Kind {
-	case KindBlob, KindAPI, KindStream, KindDir, KindLink:
+	case KindBlob, KindAPI, KindStream, KindDir, KindDynamicDir, KindLink:
 		// valid
 	default:
 		return fmt.Errorf("invalid kind %q", e.Kind)

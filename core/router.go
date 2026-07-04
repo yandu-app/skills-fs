@@ -102,7 +102,7 @@ func (r *router) list(path string) ([]DirEntry, error) {
 	if err != nil {
 		return nil, err
 	}
-	if n.mount != nil && n.mount.Kind != KindDir {
+	if n.mount != nil && n.mount.Kind != KindDir && n.mount.Kind != KindDynamicDir {
 		return nil, posix(ENOTDIR, OpReaddir, path, nil)
 	}
 	entries := make([]DirEntry, 0, len(n.static)+1)

@@ -544,7 +544,7 @@ func (s *Server) copyResource(src, dst string, caller core.CallerIdentity) error
 			return err
 		}
 		return s.fs.Mount(dst, core.MountEntry{Kind: core.KindBlob, Mode: stat.Mode, UID: stat.UID, GID: stat.GID, BlobData: data})
-	case core.KindDir:
+	case core.KindDir, core.KindDynamicDir:
 		return s.fs.Mount(dst, core.MountEntry{Kind: core.KindDir, Mode: stat.Mode, UID: stat.UID, GID: stat.GID})
 	case core.KindLink:
 		data, err := s.fs.Read(context.Background(), src, caller)
@@ -694,7 +694,7 @@ func (s *Server) propfindRecursive(ctx context.Context, p string, currentDepth, 
 	if maxDepth >= 0 && currentDepth >= maxDepth {
 		return entries, nil
 	}
-	if stat.Kind != core.KindDir {
+	if stat.Kind != core.KindDir && stat.Kind != core.KindDynamicDir {
 		return entries, nil
 	}
 
@@ -726,7 +726,7 @@ func (s *Server) propfindResponse(p string, stat core.Stat, data []byte) respons
 
 func (s *Server) propfindResponseCached(p string, stat core.Stat, etagStr string) response {
 	var rt *resourceType
-	if stat.Kind == core.KindDir {
+	if stat.Kind == core.KindDir || stat.Kind == core.KindDynamicDir {
 		rt = &resourceType{Collection: ""}
 	}
 	pr := prop{
@@ -945,7 +945,7 @@ func parseRange(rng string, total int64) (int64, int64, bool) {
 
 func contentTypeFromKind(kind core.NodeKind) string {
 	switch kind {
-	case core.KindDir:
+	case core.KindDir, core.KindDynamicDir:
 		return "httpd/unix-directory"
 	case core.KindAPI:
 		return "application/json"

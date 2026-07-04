@@ -60,6 +60,33 @@ Signals:
 Metrics:
 - Prometheus text format at `/metrics` on both WebDAV and WebSocket servers
 
+## Mount Kinds
+
+- **blob** — static file with inline content.
+- **api** — file whose content is produced by a provider `read` action; writes can be forwarded as provider `write` actions (with optional JSON payload forwarding via `writeParams: "json"`).
+- **dir** — static directory containing nested mounts.
+- **dynamic_dir** — provider-backed directory. On `readdir`, the configured `read` action is invoked and the returned JSON entries are rendered as directory contents. This lets agents `cd` into hierarchies whose entries are not known at config time (e.g. `groups/:group_id/:time_range/:message_id`). Each dynamic entry is matched against existing mounts to determine its kind.
+- **stream** — bounded ring buffer for streaming data.
+- **link** — symbolic link.
+
+Dynamic directory provider response formats:
+
+```json
+["entry1", "entry2"]
+```
+
+or
+
+```json
+{"entries": [{"name": "entry1", "kind": "dynamic_dir", "mode": "0755"}, {"name": "entry2", "kind": "api"}]}
+```
+
+`kind` is optional; when omitted it is inferred from any registered mount at the child path.
+
+## Agent Guidance (AGENTS.md)
+
+A planned enhancement is per-directory `AGENTS.md` files. When present in a directory (static or dynamic), skills-fs will expose an `AGENTS.md` file that describes the directory's purpose, available subdirectories, and parameter options. This gives agents explicit hints so they can navigate provider-backed filesystems without guessing.
+
 ## Development
 
 ```sh

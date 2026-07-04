@@ -2223,3 +2223,79 @@ func TestFollowLinkMissingPath(t *testing.T) {
 		t.Fatalf("expected ENOENT, got %v", err)
 	}
 }
+
+func TestDynamicDir(t *testing.T) {
+	fs := NewFS(GlobalConfig{})
+	p := &dynamicProvider{}
+	if err := fs.RegisterProvider(p); err != nil {
+		t.Fatal(err)
+	}
+	mustMount := func(path string, kind NodeKind, action string) {
+		err := fs.Mount(path, MountEntry{
+			Path: path,
+			Kind: kind,
+			Mode: 0o755,
+			Ops: map[OpCode]*CapConfig{
+				OpRead: {ProviderID: "dyn", Action: action},
+			},
+		})
+		if err != nil {
+			t.Fatalf("mount %s: %v", path, err)
+		}
+	}
+	mustMount("/groups", KindDynamicDir, "list_groups")
+	mustMount("/groups/:group_id", KindDynamicDir, "list_ranges")
+	mustMount("/groups/:group_id/:time_range", KindDynamicDir, "list_msgs")
+	mustMount("/groups/:group_id/:time_range/:message_id", KindAPI, "get_msg")
+
+	entries, err := fs.Readdir("/groups", CallerIdentity{})
+	if err != nil {
+		t.Fatalf("readdir /groups: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Name != "g1" || entries[0].Kind != KindDynamicDir {
+		t.Fatalf("unexpected /groups entries: %v", entries)
+	}
+
+	entries, err = fs.Readdir("/groups/g1", CallerIdentity{})
+	if err != nil {
+		t.Fatalf("readdir /groups/g1: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Name != "recent" || entries[0].Kind != KindDynamicDir {
+		t.Fatalf("unexpected /groups/g1 entries: %v", entries)
+	}
+
+	entries, err = fs.Readdir("/groups/g1/recent", CallerIdentity{})
+	if err != nil {
+		t.Fatalf("readdir /groups/g1/recent: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Name != "m1" || entries[0].Kind != KindAPI {
+		t.Fatalf("unexpected /groups/g1/recent entries: %v", entries)
+	}
+
+	data, err := fs.Read(context.Background(), "/groups/g1/recent/m1", CallerIdentity{})
+	if err != nil {
+		t.Fatalf("read message: %v", err)
+	}
+	if string(data) != `{"text":"hello"}` {
+		t.Fatalf("unexpected message data: %s", data)
+	}
+}
+
+type dynamicProvider struct{}
+
+func (p *dynamicProvider) ID() string { return "dyn" }
+
+func (p *dynamicProvider) Invoke(_ context.Context, action string, params map[string]interface{}) (*ProviderResult, error) {
+	switch action {
+	case "list_groups":
+		return &ProviderResult{Data: []byte(`{"entries":[{"name":"g1","kind":"dynamic_dir"}]}`)}, nil
+	case "list_ranges":
+		return &ProviderResult{Data: []byte(`{"entries":[{"name":"recent","kind":"dynamic_dir"}]}`)}, nil
+	case "list_msgs":
+		return &ProviderResult{Data: []byte(`{"entries":[{"name":"m1","kind":"api"}]}`)}, nil
+	case "get_msg":
+		return &ProviderResult{Data: []byte(`{"text":"hello"}`)}, nil
+	}
+	return nil, fmt.Errorf("unknown action %s", action)
+}
+

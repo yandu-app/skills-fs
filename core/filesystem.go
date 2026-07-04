@@ -3,10 +3,12 @@ package core
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -415,7 +417,7 @@ func (fs *FileSystem) Stat(path string, caller CallerIdentity) (st Stat, err err
 		size = int64(len(m.BlobData))
 	case KindAPI:
 		size = 0
-	case KindDir:
+	case KindDir, KindDynamicDir:
 		size = 0
 	case KindLink:
 		size = int64(len(m.LinkPath))
@@ -454,6 +456,8 @@ func (fs *FileSystem) Readdir(path string, caller CallerIdentity) (entries []Dir
 	}
 	fs.mu.RLock()
 	defer fs.mu.RUnlock()
+	var matchedMount *MountEntry
+	var matchedParams ParamSet
 	if path != "/" {
 		rm, err := fs.router.match(path)
 		if err == nil {
@@ -464,9 +468,11 @@ func (fs *FileSystem) Readdir(path string, caller CallerIdentity) (entries []Dir
 			if !canAccess(caller, m.UID, m.GID, m.Mode, OpReaddir) {
 				return nil, posix(EACCES, OpReaddir, path, nil)
 			}
-			if m.Kind != KindDir {
+			if m.Kind != KindDir && m.Kind != KindDynamicDir {
 				return nil, posix(ENOTDIR, OpReaddir, path, nil)
 			}
+			matchedMount = m
+			matchedParams = rm.params
 		}
 	}
 	entries, err = fs.router.list(path)
@@ -474,6 +480,24 @@ func (fs *FileSystem) Readdir(path string, caller CallerIdentity) (entries []Dir
 		return nil, err
 	}
 	entries = filterDirEntriesByNamespace(fs.router, entries, path, caller)
+	if matchedMount != nil && matchedMount.Kind == KindDynamicDir {
+		dynamicEntries, err := fs.listDynamicDir(context.Background(), matchedMount, path, matchedParams, caller)
+		if err == nil && len(dynamicEntries) > 0 {
+			entries = mergeDirEntries(entries, dynamicEntries)
+		}
+	}
+	// If the path is a dynamic directory, hide router param placeholders (e.g.
+	// ":group_id") from the listing; they are routing internals, not browseable
+	// entries. Static directories retain them for backward compatibility.
+	if matchedMount != nil && matchedMount.Kind == KindDynamicDir {
+		filtered := entries[:0]
+		for _, e := range entries {
+			if !strings.HasPrefix(e.Name, ":") {
+				filtered = append(filtered, e)
+			}
+		}
+		entries = filtered
+	}
 	if path == "/" {
 		entries = append(entries, DirEntry{Name: "sys", Kind: KindDir, Mode: 0o555})
 		entries = append(entries, DirEntry{Name: "skills", Kind: KindDir, Mode: 0o555})
@@ -589,7 +613,7 @@ func (fs *FileSystem) Read(ctx context.Context, path string, caller CallerIdenti
 		copy(result, buf[:n])
 		fs.bufPool.Put(bufPtr)
 		return result, nil
-	case KindDir:
+	case KindDir, KindDynamicDir:
 		fs.mu.RUnlock()
 		return nil, posix(EISDIR, OpRead, path, nil)
 	default:
@@ -1006,6 +1030,78 @@ func skillFilePath(path string) (string, bool) {
 	}
 	name := strings.TrimSuffix(path[len(prefix):], suffix)
 	return name, skillNameRE.MatchString(name)
+}
+
+func (fs *FileSystem) listDynamicDir(ctx context.Context, m *MountEntry, path string, params ParamSet, caller CallerIdentity) ([]DirEntry, error) {
+	cap, provider, err := fs.providerFor(m, OpRead, path)
+	if err != nil {
+		return nil, err
+	}
+	data, err := fs.invokeProvider(ctx, provider, cap, OpRead, path, params, nil, caller)
+	if err != nil {
+		return nil, err
+	}
+	entries, err := parseDynamicEntries(data)
+	if err != nil {
+		return nil, err
+	}
+	for i := range entries {
+		childPath := path
+		if path == "/" {
+			childPath = "/" + entries[i].Name
+		} else {
+			childPath = path + "/" + entries[i].Name
+		}
+		// If the provider did not specify a kind, try to infer it from any
+		// nested mount registered at the child path.
+		if entries[i].Kind == "" {
+			if rm, err := fs.router.match(childPath); err == nil {
+				entries[i].Kind = rm.mount.Kind
+				entries[i].Mode = rm.mount.Mode
+			} else {
+				entries[i].Kind = KindDir
+				entries[i].Mode = 0o555
+			}
+		}
+	}
+	return entries, nil
+}
+
+type dynamicEntry struct {
+	Name string `json:"name"`
+	Kind string `json:"kind,omitempty"`
+	Mode string `json:"mode,omitempty"`
+}
+
+func parseDynamicEntries(data []byte) ([]DirEntry, error) {
+	// First try the simple array-of-names format: ["a", "b"]
+	var names []string
+	if err := json.Unmarshal(data, &names); err == nil {
+		entries := make([]DirEntry, 0, len(names))
+		for _, name := range names {
+			entries = append(entries, DirEntry{Name: name})
+		}
+		return entries, nil
+	}
+	// Then try the object format: {"entries": [{"name": "a"}, ...]}
+	var wrapped struct {
+		Entries []dynamicEntry `json:"entries"`
+	}
+	if err := json.Unmarshal(data, &wrapped); err == nil && wrapped.Entries != nil {
+		entries := make([]DirEntry, 0, len(wrapped.Entries))
+		for _, de := range wrapped.Entries {
+			var mode uint32
+			if de.Mode != "" {
+				m, err := strconv.ParseUint(de.Mode, 8, 32)
+				if err == nil {
+					mode = uint32(m)
+				}
+			}
+			entries = append(entries, DirEntry{Name: de.Name, Kind: NodeKind(de.Kind), Mode: mode})
+		}
+		return entries, nil
+	}
+	return nil, fmt.Errorf("dynamic directory entries must be a JSON array of names or {\"entries\": [{\"name\":\"...\"}]}")
 }
 
 func mergeDirEntries(a, b []DirEntry) []DirEntry {

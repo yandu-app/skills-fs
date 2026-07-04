@@ -517,7 +517,7 @@ func fillEntryOut(out *fuse.EntryOut, st core.Stat) {
 
 func fileMode(st core.Stat) uint32 {
 	switch st.Kind {
-	case core.KindDir:
+	case core.KindDir, core.KindDynamicDir:
 		return syscall.S_IFDIR | st.Mode
 	case core.KindLink:
 		return syscall.S_IFLNK | st.Mode
@@ -531,8 +531,10 @@ func dirEntries(entries []core.DirEntry) []fuse.DirEntry {
 	for i, e := range entries {
 		mode := uint32(0)
 		switch e.Kind {
-		case core.KindDir:
+		case core.KindDir, core.KindDynamicDir:
 			mode = syscall.S_IFDIR | e.Mode
+		case core.KindLink:
+			mode = syscall.S_IFLNK | e.Mode
 		default:
 			mode = syscall.S_IFREG | e.Mode
 		}
