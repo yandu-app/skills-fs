@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -285,7 +287,8 @@ func (fs *FileSystem) Mount(p string, entry MountEntry) (err error) {
 
 // MountSkillAtRoot mounts a generated skill's SKILL.md at /SKILL.md in the
 // virtual filesystem when cfg.ExposeAtRoot is true. The skill must already be
-// generated (e.g. by fs.Skills().Generate).
+// generated (e.g. by fs.Skills().Generate). If AgentsTemplate is set, also
+// exposes /AGENTS.md at the root.
 func (fs *FileSystem) MountSkillAtRoot(cfg SkillConfig) error {
 	if !cfg.ExposeAtRoot {
 		return nil
@@ -306,11 +309,33 @@ func (fs *FileSystem) MountSkillAtRoot(cfg SkillConfig) error {
 		return err
 	}
 	fs.events.emit(Event{Path: "/SKILL.md", Kind: EventCreate})
+
+	if cfg.AgentsTemplate != "" {
+		agentsPath := filepath.Join(fs.skills.root, cfg.Name, "AGENTS.md")
+		agentsData, err := os.ReadFile(agentsPath)
+		if err != nil {
+			return err
+		}
+		agentsEntry := MountEntry{
+			Path:     "/AGENTS.md",
+			Kind:     KindBlob,
+			Mode:     0o444,
+			BlobData: agentsData,
+			UID:      fs.cfg.DefaultUID,
+			GID:      fs.cfg.DefaultGID,
+		}
+		if _, err := fs.router.add(agentsEntry); err != nil {
+			return err
+		}
+		fs.events.emit(Event{Path: "/AGENTS.md", Kind: EventCreate})
+	}
 	return nil
 }
 
-// UnmountSkillAtRoot removes the /SKILL.md mount created by MountSkillAtRoot.
+// UnmountSkillAtRoot removes the /SKILL.md and /AGENTS.md mounts created by
+// MountSkillAtRoot.
 func (fs *FileSystem) UnmountSkillAtRoot() error {
+	_, _ = fs.router.remove("/AGENTS.md")
 	_, err := fs.router.remove("/SKILL.md")
 	return err
 }

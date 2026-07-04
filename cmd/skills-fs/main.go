@@ -421,8 +421,39 @@ func cmdValidate(args []string) int {
 	}
 	fsys.Shutdown(context.Background())
 
+	if err := cfg.validateAgents(); err != nil {
+		fmt.Fprintf(os.Stderr, "config validation error: %v\n", err)
+		return 1
+	}
+
 	fmt.Println("configuration valid")
 	return 0
+}
+
+// validateAgents ensures every dir/dynamic_dir mount has a corresponding
+// AGENTS.md child mount explaining its purpose, unless explicitly disabled
+// with "agents": false.
+func (c *Config) validateAgents() error {
+	agentPaths := make(map[string]bool)
+	for _, mc := range c.Mounts {
+		if mc.Kind == "blob" && strings.HasSuffix(mc.Path, "/AGENTS.md") {
+			agentPaths[mc.Path] = true
+		}
+	}
+
+	for _, mc := range c.Mounts {
+		if mc.Kind != "dir" && mc.Kind != "dynamic_dir" {
+			continue
+		}
+		if mc.Agents != nil && !*mc.Agents {
+			continue
+		}
+		agentPath := strings.TrimSuffix(mc.Path, "/") + "/AGENTS.md"
+		if !agentPaths[agentPath] {
+			return fmt.Errorf("dir mount %q requires an %q child or `agents: false`", mc.Path, agentPath)
+		}
+	}
+	return nil
 }
 
 func cmdHealth(args []string) int {

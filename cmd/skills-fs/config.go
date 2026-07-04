@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 
 	"github.com/skills-fs/skills-fs/core"
@@ -12,10 +13,11 @@ import (
 
 // Config describes the filesystem layout and providers for the CLI.
 type Config struct {
-	Mounts    []MountConfig    `json:"mounts"`
-	Providers []ProviderConfig `json:"providers"`
-	SkillsRoot string          `json:"skillsRoot,omitempty"`
-	Skills    []core.SkillConfig `json:"skills,omitempty"`
+	Mounts     []MountConfig    `json:"mounts"`
+	Providers  []ProviderConfig `json:"providers"`
+	SkillsRoot string            `json:"skillsRoot,omitempty"`
+	Skills     []core.SkillConfig `json:"skills,omitempty"`
+	Includes   []string          `json:"includes,omitempty"`
 }
 
 // MountConfig describes a single mount point.
@@ -30,6 +32,7 @@ type MountConfig struct {
 	Write        string `json:"write,omitempty"`    // action for API write
 	WriteParams  string `json:"writeParams,omitempty"` // "json" to forward JSON payload as params
 	Serial       bool   `json:"serial,omitempty"`
+	Agents       *bool  `json:"agents,omitempty"`   // nil=required AGENTS.md for dirs; false=opt-out
 }
 
 // ProviderConfig describes an HTTP provider.
@@ -38,7 +41,9 @@ type ProviderConfig struct {
 	URL string `json:"url"`
 }
 
-// LoadConfig reads and parses a JSON config file.
+// LoadConfig reads and parses a JSON config file, then recursively loads
+// and merges any config files listed in the top-level "includes" field.
+// Include paths are resolved relative to the parent config file's directory.
 func LoadConfig(path string) (*Config, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -48,6 +53,28 @@ func LoadConfig(path string) (*Config, error) {
 	if err := json.Unmarshal(b, &cfg); err != nil {
 		return nil, err
 	}
+
+	baseDir := filepath.Dir(path)
+	seen := map[string]bool{path: true}
+	for _, inc := range cfg.Includes {
+		incPath := inc
+		if !filepath.IsAbs(incPath) {
+			incPath = filepath.Join(baseDir, incPath)
+		}
+		if seen[incPath] {
+			continue
+		}
+		seen[incPath] = true
+		incCfg, err := LoadConfig(incPath)
+		if err != nil {
+			return nil, fmt.Errorf("include %s: %w", incPath, err)
+		}
+		cfg.Providers = append(cfg.Providers, incCfg.Providers...)
+		cfg.Skills = append(cfg.Skills, incCfg.Skills...)
+		cfg.Mounts = append(cfg.Mounts, incCfg.Mounts...)
+	}
+	cfg.Includes = nil // merged; no need to keep them
+
 	return &cfg, nil
 }
 

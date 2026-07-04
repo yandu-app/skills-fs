@@ -263,6 +263,7 @@ type SkillConfig struct {
 	Metadata      map[string]string `json:"metadata,omitempty"`
 	AllowedTools  []string          `json:"allowedTools,omitempty"`
 	BodyTemplate  string            `json:"bodyTemplate"`
+	AgentsTemplate string           `json:"agentsTemplate,omitempty"`
 	Scripts       []string          `json:"scripts,omitempty"`
 	References    []string          `json:"references,omitempty"`
 	ExposeAtRoot  bool              `json:"exposeAtRoot,omitempty"`

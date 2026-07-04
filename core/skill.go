@@ -86,6 +86,23 @@ func (g *SkillGenerator) Generate(cfg SkillConfig) error {
 	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), body.Bytes(), 0o644); err != nil {
 		return err
 	}
+	if cfg.AgentsTemplate != "" {
+		var agentsBody bytes.Buffer
+		agentsBody.WriteString("---\n")
+		agentsBody.WriteString("name: " + cfg.Name + "\n")
+		agentsBody.WriteString("description: " + cfg.Description + "\n")
+		agentsBody.WriteString("---\n\n")
+		agentsTpl, err := template.New("agents").Parse(cfg.AgentsTemplate)
+		if err != nil {
+			return err
+		}
+		if err := agentsTpl.Execute(&agentsBody, cfg); err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(dir, "AGENTS.md"), agentsBody.Bytes(), 0o644); err != nil {
+			return err
+		}
+	}
 	g.mu.Lock()
 	g.skills[cfg.Name] = cfg
 	g.mu.Unlock()
