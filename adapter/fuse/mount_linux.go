@@ -27,7 +27,7 @@ func (s *Server) Mount(ctx context.Context) error {
 			FsName:        "skillsfs",
 			DisableXAttrs: true,
 			AllowOther:    s.opts.AllowOther,
-			Debug:         false,
+			Debug:         true,
 		},
 	}
 	if s.opts.ReadOnly {
@@ -97,6 +97,7 @@ func (r *rootNode) Getattr(ctx context.Context, f fs.FileHandle, out *fuse.AttrO
 
 func (r *rootNode) attr(out *fuse.AttrOut) syscall.Errno {
 	out.Mode = syscall.S_IFDIR | 0o555
+	out.Ino = r.StableAttr().Ino
 	return fs.OK
 }
 
@@ -106,10 +107,11 @@ func (r *rootNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) 
 	if err != nil {
 		return nil, toErrno(err)
 	}
-	node := &pathNode{path: p, fsys: r.fsys, readOnly: r.readOnly}
-	fillEntryOut(out, stat)
 	mode := fileMode(stat)
+	node := &pathNode{path: p, fsys: r.fsys, readOnly: r.readOnly}
 	ino := r.NewInode(ctx, node, fs.StableAttr{Mode: uint32(mode)})
+	fillEntryOut(out, stat)
+	out.Ino = ino.StableAttr().Ino
 	r.mu.Lock()
 	r.inodes[p] = ino
 	r.mu.Unlock()
@@ -248,6 +250,7 @@ func (n *pathNode) Getattr(ctx context.Context, f fs.FileHandle, out *fuse.AttrO
 		return toErrno(err)
 	}
 	fillAttrOut(out, stat)
+	out.Ino = n.StableAttr().Ino
 	return fs.OK
 }
 
@@ -257,10 +260,12 @@ func (n *pathNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) 
 	if err != nil {
 		return nil, toErrno(err)
 	}
-	child := &pathNode{path: childPath, fsys: n.fsys, readOnly: n.readOnly}
-	fillEntryOut(out, stat)
 	mode := fileMode(stat)
-	return n.NewInode(ctx, child, fs.StableAttr{Mode: uint32(mode)}), fs.OK
+	child := &pathNode{path: childPath, fsys: n.fsys, readOnly: n.readOnly}
+	ino := n.NewInode(ctx, child, fs.StableAttr{Mode: uint32(mode)})
+	fillEntryOut(out, stat)
+	out.Ino = ino.StableAttr().Ino
+	return ino, fs.OK
 }
 
 func (n *pathNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
@@ -289,7 +294,7 @@ func (n *pathNode) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint3
 	if err != nil {
 		return nil, 0, toErrno(err)
 	}
-	fh := &fileHandle{h: h, fsys: n.fsys}
+	fh := &fileHandle{h: h, fsys: n.fsys, ino: n.StableAttr().Ino}
 	return fh, fuse.FOPEN_KEEP_CACHE, fs.OK
 }
 
@@ -344,6 +349,7 @@ type fileHandle struct {
 	h        *core.Handle
 	fsys     *core.FileSystem
 	readOnly bool
+	ino      uint64
 }
 
 var _ fs.FileReader = (*fileHandle)(nil)
@@ -386,13 +392,13 @@ func (fh *fileHandle) Flush(ctx context.Context) syscall.Errno {
 func (fh *fileHandle) Release(ctx context.Context) syscall.Errno {
 	return toErrno(fh.h.Close(ctx))
 }
-
 func (fh *fileHandle) Getattr(ctx context.Context, out *fuse.AttrOut) syscall.Errno {
 	stat, err := fh.fsys.Stat(fh.h.Path(), core.CallerIdentity{})
 	if err != nil {
 		return toErrno(err)
 	}
 	fillAttrOut(out, stat)
+	out.Ino = fh.ino
 	return fs.OK
 }
 
@@ -509,7 +515,8 @@ func createFile(ctx context.Context, fsys *core.FileSystem, parentPath, name str
 	fillEntryOut(out, stat)
 	node := &pathNode{path: childPath, fsys: fsys}
 	ino := parent.EmbeddedInode().NewInode(ctx, node, fs.StableAttr{Mode: syscall.S_IFREG | (mode & 0o777)})
-	fh := &fileHandle{h: h, fsys: fsys}
+	out.Ino = ino.StableAttr().Ino
+	fh := &fileHandle{h: h, fsys: fsys, ino: ino.StableAttr().Ino}
 	return ino, fh, fuse.FOPEN_KEEP_CACHE, fs.OK
 }
 
@@ -525,7 +532,9 @@ func mkdir(ctx context.Context, fsys *core.FileSystem, parentPath, name string, 
 	}
 	fillEntryOut(out, stat)
 	node := &pathNode{path: childPath, fsys: fsys}
-	return parent.EmbeddedInode().NewInode(ctx, node, fs.StableAttr{Mode: syscall.S_IFDIR | (mode & 0o777)}), fs.OK
+	ino := parent.EmbeddedInode().NewInode(ctx, node, fs.StableAttr{Mode: syscall.S_IFDIR | (mode & 0o777)})
+	out.Ino = ino.StableAttr().Ino
+	return ino, fs.OK
 }
 
 func unlink(fsys *core.FileSystem, parentPath, name string) syscall.Errno {
@@ -572,5 +581,7 @@ func symlink(ctx context.Context, fsys *core.FileSystem, parentPath, target, nam
 	}
 	fillEntryOut(out, stat)
 	node := &pathNode{path: childPath, fsys: fsys}
-	return parent.EmbeddedInode().NewInode(ctx, node, fs.StableAttr{Mode: syscall.S_IFLNK | 0o777}), fs.OK
+	ino := parent.EmbeddedInode().NewInode(ctx, node, fs.StableAttr{Mode: syscall.S_IFLNK | 0o777})
+	out.Ino = ino.StableAttr().Ino
+	return ino, fs.OK
 }
