@@ -306,13 +306,17 @@ func (n *pathNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 	return fs.NewListDirStream(dirEntries(entries)), fs.OK
 }
 
-func (n *pathNode) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, syscall.Errno) {
+func openFlagsFromFUSE(flags uint32) core.OpenFlags {
 	var of core.OpenFlags
-	if flags&(syscall.O_RDONLY|syscall.O_RDWR) != 0 {
-		of |= core.OpenRead
-	}
-	if flags&(syscall.O_WRONLY|syscall.O_RDWR) != 0 {
+	// O_RDONLY is defined as 0, so we cannot test for it with a bitmask.
+	// Use O_ACCMODE to distinguish the three access modes.
+	switch flags & syscall.O_ACCMODE {
+	case syscall.O_WRONLY:
 		of |= core.OpenWrite
+	case syscall.O_RDWR:
+		of |= core.OpenRead | core.OpenWrite
+	default:
+		of |= core.OpenRead
 	}
 	if flags&syscall.O_APPEND != 0 {
 		of |= core.OpenAppend
@@ -320,6 +324,11 @@ func (n *pathNode) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint3
 	if flags&syscall.O_NONBLOCK != 0 {
 		of |= core.OpenNonBlock
 	}
+	return of
+}
+
+func (n *pathNode) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, syscall.Errno) {
+	of := openFlagsFromFUSE(flags)
 	h, err := n.fsys.Open(n.path, of, core.CallerIdentity{})
 	if err != nil {
 		return nil, 0, toErrno(err)
@@ -438,6 +447,12 @@ func fillAttrOut(out *fuse.AttrOut, st core.Stat) {
 	out.Mode = fileMode(st)
 	out.Uid = st.UID
 	out.Gid = st.GID
+	// API files have dynamic content; advertise a non-zero size so the
+	// kernel will issue READ calls. The actual read returns real content.
+	if st.Kind == core.KindAPI {
+		out.Size = 1024 * 1024
+		return
+	}
 	// #nosec G115 -- file sizes in core are always non-negative.
 	out.Size = uint64(st.Size)
 }
@@ -446,6 +461,10 @@ func fillEntryOut(out *fuse.EntryOut, st core.Stat) {
 	out.Mode = fileMode(st)
 	out.Uid = st.UID
 	out.Gid = st.GID
+	if st.Kind == core.KindAPI {
+		out.Size = 1024 * 1024
+		return
+	}
 	// #nosec G115 -- file sizes in core are always non-negative.
 	out.Size = uint64(st.Size)
 }

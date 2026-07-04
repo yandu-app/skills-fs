@@ -3,6 +3,7 @@
 package fuse
 
 import (
+	"syscall"
 	"testing"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
@@ -74,5 +75,42 @@ func TestFillAttrOut(t *testing.T) {
 	fillAttrOut(&out, core.Stat{Mode: 0o644, UID: 7, GID: 8, Size: 42})
 	if out.Mode != 0o100644 || out.Uid != 7 || out.Gid != 8 || out.Size != 42 {
 		t.Fatalf("unexpected attr out: mode=%o uid=%d gid=%d size=%d", out.Mode, out.Uid, out.Gid, out.Size)
+	}
+}
+
+func TestFillAttrOutAPISize(t *testing.T) {
+	var out fuse.AttrOut
+	fillAttrOut(&out, core.Stat{Kind: core.KindAPI, Mode: 0o444, Size: 0})
+	if out.Size != 1024*1024 {
+		t.Fatalf("API attr size: got %d, want %d", out.Size, 1024*1024)
+	}
+}
+
+func TestFillEntryOutAPISize(t *testing.T) {
+	var out fuse.EntryOut
+	fillEntryOut(&out, core.Stat{Kind: core.KindAPI, Mode: 0o444, Size: 0})
+	if out.Size != 1024*1024 {
+		t.Fatalf("API entry size: got %d, want %d", out.Size, 1024*1024)
+	}
+}
+
+func TestOpenFlagsFromFUSE(t *testing.T) {
+	cases := []struct {
+		flags uint32
+		want  core.OpenFlags
+	}{
+		{0, core.OpenRead},
+		{syscall.O_LARGEFILE, core.OpenRead},
+		{syscall.O_RDONLY, core.OpenRead},
+		{syscall.O_WRONLY, core.OpenWrite},
+		{syscall.O_RDWR, core.OpenRead | core.OpenWrite},
+		{syscall.O_WRONLY | syscall.O_APPEND, core.OpenWrite | core.OpenAppend},
+		{syscall.O_RDWR | syscall.O_NONBLOCK, core.OpenRead | core.OpenWrite | core.OpenNonBlock},
+	}
+	for _, tc := range cases {
+		got := openFlagsFromFUSE(tc.flags)
+		if got != tc.want {
+			t.Fatalf("flags=%#x: got %v, want %v", tc.flags, got, tc.want)
+		}
 	}
 }
