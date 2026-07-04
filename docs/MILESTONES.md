@@ -12,9 +12,10 @@ Status: complete.
 ## M1 Core Semantics
 
 - Mount, unmount, stat, read, write, readdir.
-- Blob, API, dir, link, and stream semantics in core.
+- Blob, API, dir, **dynamic_dir**, link, and stream semantics in core.
 - Provider dispatch with path params.
-- Skill generation with virtual `/skills` namespace projection.
+- Skill generation with virtual `/skills` namespace projection and optional per-skill `AGENTS.md` guides.
+- Configuration `includes` for per-Skill fragments and environment-variable expansion.
 
 Status: complete.
 

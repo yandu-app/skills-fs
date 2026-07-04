@@ -9,12 +9,14 @@ Core tests must cover:
 - Mount conflict detection.
 - Read/write permission checks.
 - Provider error string to POSIX error mapping.
-- Skill generation and cleanup.
+- Skill generation and cleanup, including `AGENTS.md` generation when `AgentsTemplate` is set.
+- Dynamic directory routing, readdir, getattr, and open/read paths.
 - Handle manager budget enforcement and sharded lookups.
 - Advisory flock shared/exclusive transitions and close release.
 - Buffered write flush on size, delay, and newline.
 - Stream read/write with block, drop, and error backpressure.
 - Event bus emit and multi-listener delivery.
+- CLI config validation, including `includes` loading and `AGENTS.md` presence checks.
 
 Run:
 
@@ -63,6 +65,16 @@ Current baseline on Linux amd64:
 ## Integration Tests
 
 FUSE tests must be opt-in and platform tagged because they require system drivers and mount privileges. They must verify real `ls`, `cat`, `grep`, `find`, and native watch events.
+
+Dynamic-directory integration tests should mount a test FUSE filesystem and verify that provider-backed entries are rendered as directories, that path parameters are passed to provider actions, and that `AGENTS.md` blobs appear in directory listings.
+
+## Validation Tests
+
+`skills-fs validate` should be tested against configs that:
+- Load and merge `includes` fragments.
+- Expand environment variables in paths and URLs.
+- Fail when a `dir` or `dynamic_dir` mount lacks a child `AGENTS.md` mount.
+- Pass when `"agents": false` is set to opt out.
 
 ## Binding Tests
 

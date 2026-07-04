@@ -6,6 +6,8 @@
 import "github.com/skills-fs/skills-fs/adapter/websocket"
 ```
 
+Package websocket implements a WebSocket streaming adapter for filesystem operations with JSON and binary messages, per\-message deflate compression, batch operations, and subscription IDs.
+
 ## Index
 
 - [type Evt](<#Evt>)
@@ -23,7 +25,7 @@ import "github.com/skills-fs/skills-fs/adapter/websocket"
 
 
 <a name="Evt"></a>
-## type [Evt](<https://github.com/yandu-app/skills-fs/blob/main/adapter/websocket/websocket.go#L203-L206>)
+## type [Evt](<https://github.com/yandu-app/skills-fs/blob/main/adapter/websocket/websocket.go#L227-L230>)
 
 
 
@@ -35,7 +37,7 @@ type Evt struct {
 ```
 
 <a name="Server"></a>
-## type [Server](<https://github.com/yandu-app/skills-fs/blob/main/adapter/websocket/websocket.go#L21-L28>)
+## type [Server](<https://github.com/yandu-app/skills-fs/blob/main/adapter/websocket/websocket.go#L22-L29>)
 
 Server streams filesystem operations over WebSocket with optional per\-message deflate compression \(RFC 7692\).
 
@@ -46,7 +48,7 @@ type Server struct {
 ```
 
 <a name="New"></a>
-### func [New](<https://github.com/yandu-app/skills-fs/blob/main/adapter/websocket/websocket.go#L30>)
+### func [New](<https://github.com/yandu-app/skills-fs/blob/main/adapter/websocket/websocket.go#L31>)
 
 ```go
 func New(fs *core.FileSystem, addr string, opts adapter.MountOptions) *Server
@@ -55,7 +57,7 @@ func New(fs *core.FileSystem, addr string, opts adapter.MountOptions) *Server
 
 
 <a name="Server.ActiveConnections"></a>
-### func \(\*Server\) [ActiveConnections](<https://github.com/yandu-app/skills-fs/blob/main/adapter/websocket/websocket.go#L43>)
+### func \(\*Server\) [ActiveConnections](<https://github.com/yandu-app/skills-fs/blob/main/adapter/websocket/websocket.go#L44>)
 
 ```go
 func (s *Server) ActiveConnections() int32
@@ -64,7 +66,7 @@ func (s *Server) ActiveConnections() int32
 
 
 <a name="Server.Addr"></a>
-### func \(\*Server\) [Addr](<https://github.com/yandu-app/skills-fs/blob/main/adapter/websocket/websocket.go#L35>)
+### func \(\*Server\) [Addr](<https://github.com/yandu-app/skills-fs/blob/main/adapter/websocket/websocket.go#L36>)
 
 ```go
 func (s *Server) Addr() string
@@ -73,7 +75,7 @@ func (s *Server) Addr() string
 
 
 <a name="Server.FileSystem"></a>
-### func \(\*Server\) [FileSystem](<https://github.com/yandu-app/skills-fs/blob/main/adapter/websocket/websocket.go#L41>)
+### func \(\*Server\) [FileSystem](<https://github.com/yandu-app/skills-fs/blob/main/adapter/websocket/websocket.go#L42>)
 
 ```go
 func (s *Server) FileSystem() *core.FileSystem
@@ -82,7 +84,7 @@ func (s *Server) FileSystem() *core.FileSystem
 
 
 <a name="Server.Mount"></a>
-### func \(\*Server\) [Mount](<https://github.com/yandu-app/skills-fs/blob/main/adapter/websocket/websocket.go#L45>)
+### func \(\*Server\) [Mount](<https://github.com/yandu-app/skills-fs/blob/main/adapter/websocket/websocket.go#L46>)
 
 ```go
 func (s *Server) Mount(ctx context.Context) error
@@ -91,7 +93,7 @@ func (s *Server) Mount(ctx context.Context) error
 
 
 <a name="Server.MountPoint"></a>
-### func \(\*Server\) [MountPoint](<https://github.com/yandu-app/skills-fs/blob/main/adapter/websocket/websocket.go#L34>)
+### func \(\*Server\) [MountPoint](<https://github.com/yandu-app/skills-fs/blob/main/adapter/websocket/websocket.go#L35>)
 
 ```go
 func (s *Server) MountPoint() string
@@ -100,7 +102,7 @@ func (s *Server) MountPoint() string
 
 
 <a name="Server.Options"></a>
-### func \(\*Server\) [Options](<https://github.com/yandu-app/skills-fs/blob/main/adapter/websocket/websocket.go#L42>)
+### func \(\*Server\) [Options](<https://github.com/yandu-app/skills-fs/blob/main/adapter/websocket/websocket.go#L43>)
 
 ```go
 func (s *Server) Options() adapter.MountOptions
@@ -109,7 +111,7 @@ func (s *Server) Options() adapter.MountOptions
 
 
 <a name="Server.Unmount"></a>
-### func \(\*Server\) [Unmount](<https://github.com/yandu-app/skills-fs/blob/main/adapter/websocket/websocket.go#L69>)
+### func \(\*Server\) [Unmount](<https://github.com/yandu-app/skills-fs/blob/main/adapter/websocket/websocket.go#L75>)
 
 ```go
 func (s *Server) Unmount(ctx context.Context) error
@@ -118,7 +120,7 @@ func (s *Server) Unmount(ctx context.Context) error
 
 
 <a name="WsMsg"></a>
-## type [WsMsg](<https://github.com/yandu-app/skills-fs/blob/main/adapter/websocket/websocket.go#L183-L190>)
+## type [WsMsg](<https://github.com/yandu-app/skills-fs/blob/main/adapter/websocket/websocket.go#L207-L214>)
 
 
 
@@ -134,7 +136,7 @@ type WsMsg struct {
 ```
 
 <a name="WsReply"></a>
-## type [WsReply](<https://github.com/yandu-app/skills-fs/blob/main/adapter/websocket/websocket.go#L192-L201>)
+## type [WsReply](<https://github.com/yandu-app/skills-fs/blob/main/adapter/websocket/websocket.go#L216-L225>)
 
 
 

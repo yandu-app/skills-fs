@@ -6,6 +6,8 @@
 import "github.com/skills-fs/skills-fs/adapter/webdav"
 ```
 
+Package webdav implements a WebDAV server that exposes core.FileSystem over HTTP with PROPFIND, GET, PUT, COPY, MOVE, LOCK, and streaming binary support.
+
 ## Index
 
 - [type Server](<#Server>)
@@ -84,7 +86,7 @@ func (s *Server) Options() adapter.MountOptions
 
 
 <a name="Server.Unmount"></a>
-### func \(\*Server\) [Unmount](<https://github.com/yandu-app/skills-fs/blob/main/adapter/webdav/webdav.go#L174>)
+### func \(\*Server\) [Unmount](<https://github.com/yandu-app/skills-fs/blob/main/adapter/webdav/webdav.go#L176>)
 
 ```go
 func (s *Server) Unmount(ctx context.Context) error

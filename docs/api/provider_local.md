@@ -6,6 +6,8 @@
 import "github.com/skills-fs/skills-fs/provider/local"
 ```
 
+Package local implements a provider that resolves calls against the host operating system's local filesystem.
+
 ## Index
 
 - [type Provider](<#Provider>)

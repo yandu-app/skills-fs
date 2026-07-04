@@ -6,6 +6,10 @@
 import "github.com/skills-fs/skills-fs/core"
 ```
 
+Package core implements the embedded virtual filesystem engine.
+
+It provides mount registration, radix\-tree routing with path parameters, POSIX permission checks, provider dispatch, handle lifecycle management, advisory file locking, write buffering, stream ring buffers, event notifications, and Agent Skill directory generation.
+
 ## Index
 
 - [func IsCode\(err error, code Errno\) bool](<#IsCode>)
@@ -25,6 +29,8 @@ import "github.com/skills-fs/skills-fs/core"
   - [func \(fs \*FileSystem\) CloseAllHandles\(\)](<#FileSystem.CloseAllHandles>)
   - [func \(fs \*FileSystem\) FollowLink\(p string\) \(string, error\)](<#FileSystem.FollowLink>)
   - [func \(fs \*FileSystem\) Mount\(p string, entry MountEntry\) \(err error\)](<#FileSystem.Mount>)
+  - [func \(fs \*FileSystem\) MountSkillAtRoot\(cfg SkillConfig\) error](<#FileSystem.MountSkillAtRoot>)
+  - [func \(fs \*FileSystem\) OnShutdown\(fn func\(\) error\)](<#FileSystem.OnShutdown>)
   - [func \(fs \*FileSystem\) Open\(path string, flags OpenFlags, caller CallerIdentity\) \(\*Handle, error\)](<#FileSystem.Open>)
   - [func \(fs \*FileSystem\) Prometheus\(\) \[\]byte](<#FileSystem.Prometheus>)
   - [func \(fs \*FileSystem\) ProviderHealth\(ctx context.Context\) map\[string\]string](<#FileSystem.ProviderHealth>)
@@ -39,11 +45,14 @@ import "github.com/skills-fs/skills-fs/core"
   - [func \(fs \*FileSystem\) ResolveParams\(path string\) \(MountEntry, ParamSet, error\)](<#FileSystem.ResolveParams>)
   - [func \(fs \*FileSystem\) Restore\(entries \[\]MountEntry\) error](<#FileSystem.Restore>)
   - [func \(fs \*FileSystem\) Shutdown\(ctx context.Context\) error](<#FileSystem.Shutdown>)
+  - [func \(fs \*FileSystem\) Skills\(\) \*SkillGenerator](<#FileSystem.Skills>)
   - [func \(fs \*FileSystem\) Snapshot\(\) \[\]MountEntry](<#FileSystem.Snapshot>)
   - [func \(fs \*FileSystem\) Stat\(path string, caller CallerIdentity\) \(st Stat, err error\)](<#FileSystem.Stat>)
   - [func \(fs \*FileSystem\) Unmount\(p string\) \(err error\)](<#FileSystem.Unmount>)
+  - [func \(fs \*FileSystem\) UnmountSkillAtRoot\(\) error](<#FileSystem.UnmountSkillAtRoot>)
   - [func \(fs \*FileSystem\) Write\(ctx context.Context, path string, payload \[\]byte, caller CallerIdentity\) \(err error\)](<#FileSystem.Write>)
 - [type GlobalConfig](<#GlobalConfig>)
+  - [func \(c GlobalConfig\) Validate\(\) error](<#GlobalConfig.Validate>)
 - [type Handle](<#Handle>)
   - [func \(h \*Handle\) Caller\(\) CallerIdentity](<#Handle.Caller>)
   - [func \(h \*Handle\) Close\(ctx context.Context\) error](<#Handle.Close>)
@@ -60,6 +69,7 @@ import "github.com/skills-fs/skills-fs/core"
 - [type Metrics](<#Metrics>)
   - [func \(m \*Metrics\) Prometheus\(\) \[\]byte](<#Metrics.Prometheus>)
 - [type MountEntry](<#MountEntry>)
+  - [func \(e MountEntry\) Validate\(\) error](<#MountEntry.Validate>)
 - [type MountEntryChange](<#MountEntryChange>)
 - [type NodeKind](<#NodeKind>)
 - [type OpCode](<#OpCode>)
@@ -94,25 +104,25 @@ import "github.com/skills-fs/skills-fs/core"
 
 
 <a name="IsCode"></a>
-## func [IsCode](<https://github.com/yandu-app/skills-fs/blob/main/core/errors.go#L52>)
+## func [IsCode](<https://github.com/yandu-app/skills-fs/blob/main/core/errors.go#L56>)
 
 ```go
 func IsCode(err error, code Errno) bool
 ```
 
-
+IsCode reports whether err wraps a PosixError with the given code.
 
 <a name="MapProviderError"></a>
-## func [MapProviderError](<https://github.com/yandu-app/skills-fs/blob/main/core/errors.go#L57>)
+## func [MapProviderError](<https://github.com/yandu-app/skills-fs/blob/main/core/errors.go#L69>)
 
 ```go
 func MapProviderError(err error, op OpCode, path string) error
 ```
 
-
+MapProviderError converts a provider\-returned error into a PosixError. If the error implements ProviderError, its code is mapped to the corresponding Errno. Otherwise the error is wrapped as EIO.
 
 <a name="AuditEntry"></a>
-## type [AuditEntry](<https://github.com/yandu-app/skills-fs/blob/main/core/types.go#L46-L53>)
+## type [AuditEntry](<https://github.com/yandu-app/skills-fs/blob/main/core/types.go#L52-L59>)
 
 AuditEntry describes a single audited operation.
 
@@ -128,7 +138,7 @@ type AuditEntry struct {
 ```
 
 <a name="AuditFunc"></a>
-## type [AuditFunc](<https://github.com/yandu-app/skills-fs/blob/main/core/types.go#L43>)
+## type [AuditFunc](<https://github.com/yandu-app/skills-fs/blob/main/core/types.go#L49>)
 
 AuditFunc receives an entry for every audited filesystem operation.
 
@@ -137,7 +147,7 @@ type AuditFunc func(AuditEntry)
 ```
 
 <a name="BackpressureMode"></a>
-## type [BackpressureMode](<https://github.com/yandu-app/skills-fs/blob/main/core/types.go#L90>)
+## type [BackpressureMode](<https://github.com/yandu-app/skills-fs/blob/main/core/types.go#L128>)
 
 
 
@@ -156,9 +166,9 @@ const (
 ```
 
 <a name="CallerIdentity"></a>
-## type [CallerIdentity](<https://github.com/yandu-app/skills-fs/blob/main/core/types.go#L139-L143>)
+## type [CallerIdentity](<https://github.com/yandu-app/skills-fs/blob/main/core/types.go#L224-L228>)
 
-
+CallerIdentity identifies the caller for permission checks.
 
 ```go
 type CallerIdentity struct {
@@ -169,9 +179,9 @@ type CallerIdentity struct {
 ```
 
 <a name="CapConfig"></a>
-## type [CapConfig](<https://github.com/yandu-app/skills-fs/blob/main/core/types.go#L124-L131>)
+## type [CapConfig](<https://github.com/yandu-app/skills-fs/blob/main/core/types.go#L207-L214>)
 
-
+CapConfig binds an [OpCode](<#OpCode>) to a provider action.
 
 ```go
 type CapConfig struct {
@@ -185,9 +195,9 @@ type CapConfig struct {
 ```
 
 <a name="CircuitBreakerConfig"></a>
-## type [CircuitBreakerConfig](<https://github.com/yandu-app/skills-fs/blob/main/core/types.go#L55-L60>)
+## type [CircuitBreakerConfig](<https://github.com/yandu-app/skills-fs/blob/main/core/types.go#L62-L67>)
 
-
+CircuitBreakerConfig configures per\-provider circuit breaking.
 
 ```go
 type CircuitBreakerConfig struct {
@@ -199,9 +209,9 @@ type CircuitBreakerConfig struct {
 ```
 
 <a name="DirEntry"></a>
-## type [DirEntry](<https://github.com/yandu-app/skills-fs/blob/main/core/types.go#L184-L188>)
+## type [DirEntry](<https://github.com/yandu-app/skills-fs/blob/main/core/types.go#L283-L287>)
 
-
+DirEntry is a single child returned by [FileSystem.Readdir](<#FileSystem.Readdir>).
 
 ```go
 type DirEntry struct {
@@ -212,9 +222,9 @@ type DirEntry struct {
 ```
 
 <a name="Errno"></a>
-## type [Errno](<https://github.com/yandu-app/skills-fs/blob/main/core/errors.go#L9>)
+## type [Errno](<https://github.com/yandu-app/skills-fs/blob/main/core/errors.go#L10>)
 
-
+Errno represents a POSIX error code returned by filesystem operations.
 
 ```go
 type Errno string
@@ -275,7 +285,7 @@ const (
 ```
 
 <a name="FileSystem"></a>
-## type [FileSystem](<https://github.com/yandu-app/skills-fs/blob/main/core/filesystem.go#L69-L85>)
+## type [FileSystem](<https://github.com/yandu-app/skills-fs/blob/main/core/filesystem.go#L73-L91>)
 
 
 
@@ -286,16 +296,16 @@ type FileSystem struct {
 ```
 
 <a name="NewFS"></a>
-### func [NewFS](<https://github.com/yandu-app/skills-fs/blob/main/core/filesystem.go#L92>)
+### func [NewFS](<https://github.com/yandu-app/skills-fs/blob/main/core/filesystem.go#L99>)
 
 ```go
 func NewFS(cfg GlobalConfig) *FileSystem
 ```
 
-
+NewFS creates a new virtual filesystem. Panics if cfg is invalid.
 
 <a name="FileSystem.CloseAllHandles"></a>
-### func \(\*FileSystem\) [CloseAllHandles](<https://github.com/yandu-app/skills-fs/blob/main/core/filesystem.go#L120>)
+### func \(\*FileSystem\) [CloseAllHandles](<https://github.com/yandu-app/skills-fs/blob/main/core/filesystem.go#L133>)
 
 ```go
 func (fs *FileSystem) CloseAllHandles()
@@ -304,7 +314,7 @@ func (fs *FileSystem) CloseAllHandles()
 CloseAllHandles forcibly closes every open handle, flushing buffered writes and releasing advisory locks. Errors from individual closes are discarded; callers should treat the filesystem as unusable after this call.
 
 <a name="FileSystem.FollowLink"></a>
-### func \(\*FileSystem\) [FollowLink](<https://github.com/yandu-app/skills-fs/blob/main/core/filesystem.go#L703>)
+### func \(\*FileSystem\) [FollowLink](<https://github.com/yandu-app/skills-fs/blob/main/core/filesystem.go#L840>)
 
 ```go
 func (fs *FileSystem) FollowLink(p string) (string, error)
@@ -313,13 +323,31 @@ func (fs *FileSystem) FollowLink(p string) (string, error)
 FollowLink resolves a path by following symlinks. It returns the final resolved path or an error if a loop is detected or a link target is invalid.
 
 <a name="FileSystem.Mount"></a>
-### func \(\*FileSystem\) [Mount](<https://github.com/yandu-app/skills-fs/blob/main/core/filesystem.go#L175>)
+### func \(\*FileSystem\) [Mount](<https://github.com/yandu-app/skills-fs/blob/main/core/filesystem.go#L222>)
 
 ```go
 func (fs *FileSystem) Mount(p string, entry MountEntry) (err error)
 ```
 
+Mount registers a node at the given path. Returns EEXIST if the path is taken, EINVAL if provider ops reference an unregistered provider, or EBUSY if MaxMounts is reached.
 
+<a name="FileSystem.MountSkillAtRoot"></a>
+### func \(\*FileSystem\) [MountSkillAtRoot](<https://github.com/yandu-app/skills-fs/blob/main/core/filesystem.go#L292>)
+
+```go
+func (fs *FileSystem) MountSkillAtRoot(cfg SkillConfig) error
+```
+
+MountSkillAtRoot mounts a generated skill's SKILL.md at /SKILL.md in the virtual filesystem when cfg.ExposeAtRoot is true. The skill must already be generated \(e.g. by fs.Skills\(\).Generate\). If AgentsTemplate is set, also exposes /AGENTS.md at the root.
+
+<a name="FileSystem.OnShutdown"></a>
+### func \(\*FileSystem\) [OnShutdown](<https://github.com/yandu-app/skills-fs/blob/main/core/filesystem.go#L143>)
+
+```go
+func (fs *FileSystem) OnShutdown(fn func() error)
+```
+
+OnShutdown registers a cleanup hook that runs during Shutdown after all handles, streams, and events are torn down. Hooks run in reverse registration order \(LIFO\). Errors from individual hooks are discarded so that later hooks still execute.
 
 <a name="FileSystem.Open"></a>
 ### func \(\*FileSystem\) [Open](<https://github.com/yandu-app/skills-fs/blob/main/core/handles.go#L167>)
@@ -331,7 +359,7 @@ func (fs *FileSystem) Open(path string, flags OpenFlags, caller CallerIdentity) 
 Open registers a handle for the given path. The mount must permit the operation implied by flags or EACCES is returned. Buffer policy is captured from the mount entry so subsequent writes coalesce correctly.
 
 <a name="FileSystem.Prometheus"></a>
-### func \(\*FileSystem\) [Prometheus](<https://github.com/yandu-app/skills-fs/blob/main/core/filesystem.go#L818>)
+### func \(\*FileSystem\) [Prometheus](<https://github.com/yandu-app/skills-fs/blob/main/core/filesystem.go#L932>)
 
 ```go
 func (fs *FileSystem) Prometheus() []byte
@@ -340,7 +368,7 @@ func (fs *FileSystem) Prometheus() []byte
 Prometheus returns the complete set of metrics in Prometheus text format, including operation histograms, event counters, and runtime gauges.
 
 <a name="FileSystem.ProviderHealth"></a>
-### func \(\*FileSystem\) [ProviderHealth](<https://github.com/yandu-app/skills-fs/blob/main/core/filesystem.go#L152>)
+### func \(\*FileSystem\) [ProviderHealth](<https://github.com/yandu-app/skills-fs/blob/main/core/filesystem.go#L197>)
 
 ```go
 func (fs *FileSystem) ProviderHealth(ctx context.Context) map[string]string
@@ -349,16 +377,16 @@ func (fs *FileSystem) ProviderHealth(ctx context.Context) map[string]string
 ProviderHealth returns a map of provider ID to health status string. If a provider implements HealthCheckable, its HealthCheck is called. Otherwise it is reported as "unknown".
 
 <a name="FileSystem.Read"></a>
-### func \(\*FileSystem\) [Read](<https://github.com/yandu-app/skills-fs/blob/main/core/filesystem.go#L431>)
+### func \(\*FileSystem\) [Read](<https://github.com/yandu-app/skills-fs/blob/main/core/filesystem.go#L564>)
 
 ```go
 func (fs *FileSystem) Read(ctx context.Context, path string, caller CallerIdentity) (data []byte, err error)
 ```
 
-
+Read returns the contents of a blob, link, or API node. Returns EISDIR for directories, ENOSYS for streams, EACCES if read permission is missing.
 
 <a name="FileSystem.ReadLink"></a>
-### func \(\*FileSystem\) [ReadLink](<https://github.com/yandu-app/skills-fs/blob/main/core/filesystem.go#L688>)
+### func \(\*FileSystem\) [ReadLink](<https://github.com/yandu-app/skills-fs/blob/main/core/filesystem.go#L825>)
 
 ```go
 func (fs *FileSystem) ReadLink(path string) (string, error)
@@ -367,16 +395,16 @@ func (fs *FileSystem) ReadLink(path string) (string, error)
 ReadLink returns the target of a symlink without following it.
 
 <a name="FileSystem.Readdir"></a>
-### func \(\*FileSystem\) [Readdir](<https://github.com/yandu-app/skills-fs/blob/main/core/filesystem.go#L349>)
+### func \(\*FileSystem\) [Readdir](<https://github.com/yandu-app/skills-fs/blob/main/core/filesystem.go#L458>)
 
 ```go
 func (fs *FileSystem) Readdir(path string, caller CallerIdentity) (entries []DirEntry, err error)
 ```
 
-
+Readdir lists children of a directory node. Returns ENOTDIR if the path is not KindDir.
 
 <a name="FileSystem.RegisterNotifier"></a>
-### func \(\*FileSystem\) [RegisterNotifier](<https://github.com/yandu-app/skills-fs/blob/main/core/filesystem.go#L170>)
+### func \(\*FileSystem\) [RegisterNotifier](<https://github.com/yandu-app/skills-fs/blob/main/core/filesystem.go#L215>)
 
 ```go
 func (fs *FileSystem) RegisterNotifier(fn func(Event), prefix string) func()
@@ -385,16 +413,16 @@ func (fs *FileSystem) RegisterNotifier(fn func(Event), prefix string) func()
 
 
 <a name="FileSystem.RegisterProvider"></a>
-### func \(\*FileSystem\) [RegisterProvider](<https://github.com/yandu-app/skills-fs/blob/main/core/filesystem.go#L136>)
+### func \(\*FileSystem\) [RegisterProvider](<https://github.com/yandu-app/skills-fs/blob/main/core/filesystem.go#L181>)
 
 ```go
 func (fs *FileSystem) RegisterProvider(p Provider) error
 ```
 
-
+RegisterProvider adds a provider to the filesystem. Returns EEXIST if already registered.
 
 <a name="FileSystem.Remove"></a>
-### func \(\*FileSystem\) [Remove](<https://github.com/yandu-app/skills-fs/blob/main/core/filesystem.go#L262>)
+### func \(\*FileSystem\) [Remove](<https://github.com/yandu-app/skills-fs/blob/main/core/filesystem.go#L367>)
 
 ```go
 func (fs *FileSystem) Remove(path string) error
@@ -403,7 +431,7 @@ func (fs *FileSystem) Remove(path string) error
 Remove is a semantic alias for Unmount.
 
 <a name="FileSystem.Rename"></a>
-### func \(\*FileSystem\) [Rename](<https://github.com/yandu-app/skills-fs/blob/main/core/filesystem.go#L268>)
+### func \(\*FileSystem\) [Rename](<https://github.com/yandu-app/skills-fs/blob/main/core/filesystem.go#L373>)
 
 ```go
 func (fs *FileSystem) Rename(oldPath, newPath string) (err error)
@@ -412,7 +440,7 @@ func (fs *FileSystem) Rename(oldPath, newPath string) (err error)
 Rename moves a mount from oldPath to newPath, preserving its properties. It returns an error if oldPath does not exist or newPath is already mounted.
 
 <a name="FileSystem.Resolve"></a>
-### func \(\*FileSystem\) [Resolve](<https://github.com/yandu-app/skills-fs/blob/main/core/filesystem.go#L587>)
+### func \(\*FileSystem\) [Resolve](<https://github.com/yandu-app/skills-fs/blob/main/core/filesystem.go#L724>)
 
 ```go
 func (fs *FileSystem) Resolve(path string) (MountEntry, map[string]string, error)
@@ -421,7 +449,7 @@ func (fs *FileSystem) Resolve(path string) (MountEntry, map[string]string, error
 
 
 <a name="FileSystem.ResolveParams"></a>
-### func \(\*FileSystem\) [ResolveParams](<https://github.com/yandu-app/skills-fs/blob/main/core/filesystem.go#L597>)
+### func \(\*FileSystem\) [ResolveParams](<https://github.com/yandu-app/skills-fs/blob/main/core/filesystem.go#L734>)
 
 ```go
 func (fs *FileSystem) ResolveParams(path string) (MountEntry, ParamSet, error)
@@ -430,7 +458,7 @@ func (fs *FileSystem) ResolveParams(path string) (MountEntry, ParamSet, error)
 
 
 <a name="FileSystem.Restore"></a>
-### func \(\*FileSystem\) [Restore](<https://github.com/yandu-app/skills-fs/blob/main/core/filesystem.go#L616>)
+### func \(\*FileSystem\) [Restore](<https://github.com/yandu-app/skills-fs/blob/main/core/filesystem.go#L753>)
 
 ```go
 func (fs *FileSystem) Restore(entries []MountEntry) error
@@ -439,16 +467,25 @@ func (fs *FileSystem) Restore(entries []MountEntry) error
 Restore mounts a slice of entries, clearing existing mounts first. It returns the first error encountered without rolling back.
 
 <a name="FileSystem.Shutdown"></a>
-### func \(\*FileSystem\) [Shutdown](<https://github.com/yandu-app/skills-fs/blob/main/core/filesystem.go#L129>)
+### func \(\*FileSystem\) [Shutdown](<https://github.com/yandu-app/skills-fs/blob/main/core/filesystem.go#L154>)
 
 ```go
 func (fs *FileSystem) Shutdown(ctx context.Context) error
 ```
 
-Shutdown performs a graceful teardown: it closes all handles, closes all stream buffers, and clears event notifiers. After Shutdown the filesystem should not be used.
+Shutdown performs a graceful teardown: it closes all handles with the provided context, closes all stream buffers, clears event notifiers, and runs any registered OnShutdown hooks. If ctx is cancelled or reaches its deadline, Shutdown returns immediately with ctx.Err\(\) and some handles may remain open.
+
+<a name="FileSystem.Skills"></a>
+### func \(\*FileSystem\) [Skills](<https://github.com/yandu-app/skills-fs/blob/main/core/filesystem.go#L128>)
+
+```go
+func (fs *FileSystem) Skills() *SkillGenerator
+```
+
+Skills returns the SkillGenerator for this filesystem.
 
 <a name="FileSystem.Snapshot"></a>
-### func \(\*FileSystem\) [Snapshot](<https://github.com/yandu-app/skills-fs/blob/main/core/filesystem.go#L608>)
+### func \(\*FileSystem\) [Snapshot](<https://github.com/yandu-app/skills-fs/blob/main/core/filesystem.go#L745>)
 
 ```go
 func (fs *FileSystem) Snapshot() []MountEntry
@@ -457,16 +494,16 @@ func (fs *FileSystem) Snapshot() []MountEntry
 Snapshot returns a copy of every mounted entry in the namespace.
 
 <a name="FileSystem.Stat"></a>
-### func \(\*FileSystem\) [Stat](<https://github.com/yandu-app/skills-fs/blob/main/core/filesystem.go#L297>)
+### func \(\*FileSystem\) [Stat](<https://github.com/yandu-app/skills-fs/blob/main/core/filesystem.go#L403>)
 
 ```go
 func (fs *FileSystem) Stat(path string, caller CallerIdentity) (st Stat, err error)
 ```
 
-
+Stat returns metadata for the node at path. Results are cached within StatCacheTTL.
 
 <a name="FileSystem.Unmount"></a>
-### func \(\*FileSystem\) [Unmount](<https://github.com/yandu-app/skills-fs/blob/main/core/filesystem.go#L237>)
+### func \(\*FileSystem\) [Unmount](<https://github.com/yandu-app/skills-fs/blob/main/core/filesystem.go#L342>)
 
 ```go
 func (fs *FileSystem) Unmount(p string) (err error)
@@ -474,19 +511,28 @@ func (fs *FileSystem) Unmount(p string) (err error)
 
 
 
+<a name="FileSystem.UnmountSkillAtRoot"></a>
+### func \(\*FileSystem\) [UnmountSkillAtRoot](<https://github.com/yandu-app/skills-fs/blob/main/core/filesystem.go#L337>)
+
+```go
+func (fs *FileSystem) UnmountSkillAtRoot() error
+```
+
+UnmountSkillAtRoot removes the /SKILL.md and /AGENTS.md mounts created by MountSkillAtRoot.
+
 <a name="FileSystem.Write"></a>
-### func \(\*FileSystem\) [Write](<https://github.com/yandu-app/skills-fs/blob/main/core/filesystem.go#L516>)
+### func \(\*FileSystem\) [Write](<https://github.com/yandu-app/skills-fs/blob/main/core/filesystem.go#L653>)
 
 ```go
 func (fs *FileSystem) Write(ctx context.Context, path string, payload []byte, caller CallerIdentity) (err error)
 ```
 
-
+Write replaces blob data or dispatches a write to the API provider. For blob mounts the payload replaces the entire content. Invalidates the stat cache on success.
 
 <a name="GlobalConfig"></a>
-## type [GlobalConfig](<https://github.com/yandu-app/skills-fs/blob/main/core/types.go#L27-L40>)
+## type [GlobalConfig](<https://github.com/yandu-app/skills-fs/blob/main/core/types.go#L33-L46>)
 
-
+GlobalConfig controls filesystem\-wide limits and behaviour. Apply defaults by calling [NewFS](<#NewFS>), which invokes withDefaults internally.
 
 ```go
 type GlobalConfig struct {
@@ -504,6 +550,15 @@ type GlobalConfig struct {
     AuditFunc         AuditFunc // optional; nil disables audit logging
 }
 ```
+
+<a name="GlobalConfig.Validate"></a>
+### func \(GlobalConfig\) [Validate](<https://github.com/yandu-app/skills-fs/blob/main/core/types.go#L97>)
+
+```go
+func (c GlobalConfig) Validate() error
+```
+
+
 
 <a name="Handle"></a>
 ## type [Handle](<https://github.com/yandu-app/skills-fs/blob/main/core/handles.go#L49-L63>)
@@ -607,7 +662,7 @@ func (h *Handle) Write(ctx context.Context, payload []byte) error
 Write writes payload through the handle, honouring buffer policy and the underlying mount's serial queue.
 
 <a name="HealthCheckable"></a>
-## type [HealthCheckable](<https://github.com/yandu-app/skills-fs/blob/main/core/types.go#L152-L154>)
+## type [HealthCheckable](<https://github.com/yandu-app/skills-fs/blob/main/core/types.go#L239-L241>)
 
 HealthCheckable is an optional interface providers may implement to support explicit health check probes.
 
@@ -637,7 +692,7 @@ const (
 ```
 
 <a name="Metrics"></a>
-## type [Metrics](<https://github.com/yandu-app/skills-fs/blob/main/core/metrics.go#L26-L30>)
+## type [Metrics](<https://github.com/yandu-app/skills-fs/blob/main/core/metrics.go#L26-L32>)
 
 
 
@@ -648,7 +703,7 @@ type Metrics struct {
 ```
 
 <a name="Metrics.Prometheus"></a>
-### func \(\*Metrics\) [Prometheus](<https://github.com/yandu-app/skills-fs/blob/main/core/metrics.go#L76>)
+### func \(\*Metrics\) [Prometheus](<https://github.com/yandu-app/skills-fs/blob/main/core/metrics.go#L88>)
 
 ```go
 func (m *Metrics) Prometheus() []byte
@@ -657,9 +712,9 @@ func (m *Metrics) Prometheus() []byte
 
 
 <a name="MountEntry"></a>
-## type [MountEntry](<https://github.com/yandu-app/skills-fs/blob/main/core/types.go#L104-L122>)
+## type [MountEntry](<https://github.com/yandu-app/skills-fs/blob/main/core/types.go#L145-L163>)
 
-
+MountEntry describes a single node in the virtual filesystem. Populate Kind, Mode, and at least one data source \(BlobData, LinkPath, Ops, or Stream\) before passing to [FileSystem.Mount](<#FileSystem.Mount>).
 
 ```go
 type MountEntry struct {
@@ -683,8 +738,17 @@ type MountEntry struct {
 }
 ```
 
+<a name="MountEntry.Validate"></a>
+### func \(MountEntry\) [Validate](<https://github.com/yandu-app/skills-fs/blob/main/core/types.go#L165>)
+
+```go
+func (e MountEntry) Validate() error
+```
+
+
+
 <a name="MountEntryChange"></a>
-## type [MountEntryChange](<https://github.com/yandu-app/skills-fs/blob/main/core/types.go#L196-L200>)
+## type [MountEntryChange](<https://github.com/yandu-app/skills-fs/blob/main/core/types.go#L295-L299>)
 
 
 
@@ -697,9 +761,9 @@ type MountEntryChange struct {
 ```
 
 <a name="NodeKind"></a>
-## type [NodeKind](<https://github.com/yandu-app/skills-fs/blob/main/core/types.go#L8>)
+## type [NodeKind](<https://github.com/yandu-app/skills-fs/blob/main/core/types.go#L10>)
 
-
+NodeKind classifies the type of a mounted node.
 
 ```go
 type NodeKind string
@@ -709,18 +773,19 @@ type NodeKind string
 
 ```go
 const (
-    KindBlob   NodeKind = "blob"
-    KindAPI    NodeKind = "api"
-    KindStream NodeKind = "stream"
-    KindDir    NodeKind = "dir"
-    KindLink   NodeKind = "link"
+    KindBlob       NodeKind = "blob"
+    KindAPI        NodeKind = "api"
+    KindStream     NodeKind = "stream"
+    KindDir        NodeKind = "dir"
+    KindDynamicDir NodeKind = "dynamic_dir"
+    KindLink       NodeKind = "link"
 )
 ```
 
 <a name="OpCode"></a>
-## type [OpCode](<https://github.com/yandu-app/skills-fs/blob/main/core/types.go#L18>)
+## type [OpCode](<https://github.com/yandu-app/skills-fs/blob/main/core/types.go#L22>)
 
-
+OpCode identifies a filesystem operation for capability checks and error reporting.
 
 ```go
 type OpCode string
@@ -738,9 +803,9 @@ const (
 ```
 
 <a name="OpContext"></a>
-## type [OpContext](<https://github.com/yandu-app/skills-fs/blob/main/core/types.go#L133-L137>)
+## type [OpContext](<https://github.com/yandu-app/skills-fs/blob/main/core/types.go#L217-L221>)
 
-
+OpContext carries operation metadata into ParamsFn callbacks.
 
 ```go
 type OpContext struct {
@@ -836,9 +901,9 @@ func (p ParamSet) ToMap() map[string]string
 ToMap returns a freshly allocated map mirroring the parameter set. Callers that need map semantics \(notably ParamsFn\) should call this only after the hot resolve path completes.
 
 <a name="PosixError"></a>
-## type [PosixError](<https://github.com/yandu-app/skills-fs/blob/main/core/errors.go#L30-L35>)
+## type [PosixError](<https://github.com/yandu-app/skills-fs/blob/main/core/errors.go#L33-L38>)
 
-
+PosixError is the error type returned by all filesystem operations. Use IsCode to check for specific error codes.
 
 ```go
 type PosixError struct {
@@ -850,7 +915,7 @@ type PosixError struct {
 ```
 
 <a name="PosixError.Error"></a>
-### func \(\*PosixError\) [Error](<https://github.com/yandu-app/skills-fs/blob/main/core/errors.go#L37>)
+### func \(\*PosixError\) [Error](<https://github.com/yandu-app/skills-fs/blob/main/core/errors.go#L40>)
 
 ```go
 func (e *PosixError) Error() string
@@ -859,7 +924,7 @@ func (e *PosixError) Error() string
 
 
 <a name="PosixError.Unwrap"></a>
-### func \(\*PosixError\) [Unwrap](<https://github.com/yandu-app/skills-fs/blob/main/core/errors.go#L44>)
+### func \(\*PosixError\) [Unwrap](<https://github.com/yandu-app/skills-fs/blob/main/core/errors.go#L47>)
 
 ```go
 func (e *PosixError) Unwrap() error
@@ -868,9 +933,9 @@ func (e *PosixError) Unwrap() error
 
 
 <a name="Provider"></a>
-## type [Provider](<https://github.com/yandu-app/skills-fs/blob/main/core/types.go#L145-L148>)
+## type [Provider](<https://github.com/yandu-app/skills-fs/blob/main/core/types.go#L232-L235>)
 
-
+Provider is the interface that external data sources implement. Register implementations with [FileSystem.RegisterProvider](<#FileSystem.RegisterProvider>).
 
 ```go
 type Provider interface {
@@ -880,9 +945,9 @@ type Provider interface {
 ```
 
 <a name="ProviderResult"></a>
-## type [ProviderResult](<https://github.com/yandu-app/skills-fs/blob/main/core/types.go#L156-L160>)
+## type [ProviderResult](<https://github.com/yandu-app/skills-fs/blob/main/core/types.go#L247-L251>)
 
-
+ProviderResult is returned by Provider.Invoke. Data is forwarded through FileSystem.Read; Meta and ContentType are currently provider\-side metadata not yet wired to adapters \(e.g. WebDAV could use ContentType for the Content\-Type header instead of contentTypeFromKind\).
 
 ```go
 type ProviderResult struct {
@@ -893,27 +958,32 @@ type ProviderResult struct {
 ```
 
 <a name="SkillConfig"></a>
-## type [SkillConfig](<https://github.com/yandu-app/skills-fs/blob/main/core/types.go#L162-L173>)
+## type [SkillConfig](<https://github.com/yandu-app/skills-fs/blob/main/core/types.go#L254-L270>)
 
-
+SkillConfig describes a skill to be generated into the /skills namespace.
 
 ```go
 type SkillConfig struct {
-    Enabled       bool
-    Name          string
-    Description   string
-    License       string
-    Compatibility string
-    Metadata      map[string]string
-    AllowedTools  []string
-    BodyTemplate  string
-    Scripts       []string
-    References    []string
+    Enabled        bool              `json:"enabled"`
+    Name           string            `json:"name"`
+    Description    string            `json:"description"`
+    Version        string            `json:"version,omitempty"`
+    Author         string            `json:"author,omitempty"`
+    License        string            `json:"license,omitempty"`
+    Platforms      []string          `json:"platforms,omitempty"`
+    Compatibility  string            `json:"compatibility,omitempty"`
+    Metadata       map[string]string `json:"metadata,omitempty"`
+    AllowedTools   []string          `json:"allowedTools,omitempty"`
+    BodyTemplate   string            `json:"bodyTemplate"`
+    AgentsTemplate string            `json:"agentsTemplate,omitempty"`
+    Scripts        []string          `json:"scripts,omitempty"`
+    References     []string          `json:"references,omitempty"`
+    ExposeAtRoot   bool              `json:"exposeAtRoot,omitempty"`
 }
 ```
 
 <a name="SkillGenerator"></a>
-## type [SkillGenerator](<https://github.com/yandu-app/skills-fs/blob/main/core/skill.go#L15-L19>)
+## type [SkillGenerator](<https://github.com/yandu-app/skills-fs/blob/main/core/skill.go#L16-L20>)
 
 
 
@@ -924,7 +994,7 @@ type SkillGenerator struct {
 ```
 
 <a name="NewSkillGenerator"></a>
-### func [NewSkillGenerator](<https://github.com/yandu-app/skills-fs/blob/main/core/skill.go#L21>)
+### func [NewSkillGenerator](<https://github.com/yandu-app/skills-fs/blob/main/core/skill.go#L22>)
 
 ```go
 func NewSkillGenerator(root string) *SkillGenerator
@@ -933,7 +1003,7 @@ func NewSkillGenerator(root string) *SkillGenerator
 
 
 <a name="SkillGenerator.Exists"></a>
-### func \(\*SkillGenerator\) [Exists](<https://github.com/yandu-app/skills-fs/blob/main/core/skill.go#L110>)
+### func \(\*SkillGenerator\) [Exists](<https://github.com/yandu-app/skills-fs/blob/main/core/skill.go#L139>)
 
 ```go
 func (g *SkillGenerator) Exists(name string) bool
@@ -942,7 +1012,7 @@ func (g *SkillGenerator) Exists(name string) bool
 
 
 <a name="SkillGenerator.Generate"></a>
-### func \(\*SkillGenerator\) [Generate](<https://github.com/yandu-app/skills-fs/blob/main/core/skill.go#L25>)
+### func \(\*SkillGenerator\) [Generate](<https://github.com/yandu-app/skills-fs/blob/main/core/skill.go#L26>)
 
 ```go
 func (g *SkillGenerator) Generate(cfg SkillConfig) error
@@ -951,7 +1021,7 @@ func (g *SkillGenerator) Generate(cfg SkillConfig) error
 
 
 <a name="SkillGenerator.List"></a>
-### func \(\*SkillGenerator\) [List](<https://github.com/yandu-app/skills-fs/blob/main/core/skill.go#L99>)
+### func \(\*SkillGenerator\) [List](<https://github.com/yandu-app/skills-fs/blob/main/core/skill.go#L128>)
 
 ```go
 func (g *SkillGenerator) List() []SkillConfig
@@ -960,7 +1030,7 @@ func (g *SkillGenerator) List() []SkillConfig
 
 
 <a name="SkillGenerator.ReadSkillFile"></a>
-### func \(\*SkillGenerator\) [ReadSkillFile](<https://github.com/yandu-app/skills-fs/blob/main/core/skill.go#L117>)
+### func \(\*SkillGenerator\) [ReadSkillFile](<https://github.com/yandu-app/skills-fs/blob/main/core/skill.go#L146>)
 
 ```go
 func (g *SkillGenerator) ReadSkillFile(name string) ([]byte, error)
@@ -969,7 +1039,7 @@ func (g *SkillGenerator) ReadSkillFile(name string) ([]byte, error)
 
 
 <a name="SkillGenerator.Remove"></a>
-### func \(\*SkillGenerator\) [Remove](<https://github.com/yandu-app/skills-fs/blob/main/core/skill.go#L83>)
+### func \(\*SkillGenerator\) [Remove](<https://github.com/yandu-app/skills-fs/blob/main/core/skill.go#L112>)
 
 ```go
 func (g *SkillGenerator) Remove(name string) error
@@ -978,7 +1048,7 @@ func (g *SkillGenerator) Remove(name string) error
 
 
 <a name="SnapshotDiff"></a>
-## type [SnapshotDiff](<https://github.com/yandu-app/skills-fs/blob/main/core/types.go#L190-L194>)
+## type [SnapshotDiff](<https://github.com/yandu-app/skills-fs/blob/main/core/types.go#L289-L293>)
 
 
 
@@ -991,7 +1061,7 @@ type SnapshotDiff struct {
 ```
 
 <a name="DiffSnapshots"></a>
-### func [DiffSnapshots](<https://github.com/yandu-app/skills-fs/blob/main/core/filesystem.go#L632>)
+### func [DiffSnapshots](<https://github.com/yandu-app/skills-fs/blob/main/core/filesystem.go#L769>)
 
 ```go
 func DiffSnapshots(old, new []MountEntry) SnapshotDiff
@@ -1000,9 +1070,9 @@ func DiffSnapshots(old, new []MountEntry) SnapshotDiff
 DiffSnapshots compares two mount entry slices and returns added, removed, and modified entries. Comparison ignores runtime\-only fields \(serial, ID\).
 
 <a name="Stat"></a>
-## type [Stat](<https://github.com/yandu-app/skills-fs/blob/main/core/types.go#L175-L182>)
+## type [Stat](<https://github.com/yandu-app/skills-fs/blob/main/core/types.go#L273-L280>)
 
-
+Stat describes a mounted node, returned by [FileSystem.Stat](<#FileSystem.Stat>).
 
 ```go
 type Stat struct {
@@ -1016,7 +1086,7 @@ type Stat struct {
 ```
 
 <a name="StreamConfig"></a>
-## type [StreamConfig](<https://github.com/yandu-app/skills-fs/blob/main/core/types.go#L98-L102>)
+## type [StreamConfig](<https://github.com/yandu-app/skills-fs/blob/main/core/types.go#L136-L140>)
 
 
 

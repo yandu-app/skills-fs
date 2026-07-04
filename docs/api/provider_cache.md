@@ -6,6 +6,8 @@
 import "github.com/skills-fs/skills-fs/provider/cache"
 ```
 
+Package cache implements a caching provider decorator that memoizes Invoke results with TTL\-based invalidation.
+
 ## Index
 
 - [type Provider](<#Provider>)

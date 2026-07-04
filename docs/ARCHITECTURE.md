@@ -3,18 +3,18 @@
 `skills-fs` exposes host application capabilities as a filesystem-shaped namespace.
 
 ```
-Agent tools -> FUSE/WebDAV/Bindings -> core.FileSystem -> Provider.Invoke
+Agent tools -> FUSE/WebDAV/WebSocket/Bindings -> core.FileSystem -> Provider.Invoke
 ```
 
 ## Core Ownership
 
 The Go core owns:
 
-- Mount registration and route conflict checks.
+- Mount registration and route conflict checks, including dynamic directories (`KindDynamicDir`) whose children are provided at runtime by an HTTP/WebSocket provider.
 - Path parameter extraction (zero-allocation inline array).
 - Unix-style mode checks.
 - Provider dispatch and POSIX error mapping.
-- Generated Agent Skill directories.
+- Generated Agent Skill directories, `SKILL.md`, and optional `AGENTS.md` guides.
 - Handle lifecycle, advisory locking, write buffering, stream ring buffers.
 - Event notification bus.
 - Prometheus-compatible metrics at `/sys/metrics`.
@@ -38,6 +38,6 @@ Host bindings own only:
 - `binding/registry`: handle-to-FS registry and per-handle last-error storage used by the C bridge.
 - `binding/nodejs`: Node.js N-API wrapper consuming `libgobridge.so`.
 - `binding/python`: Python ctypes wrapper consuming `libgobridge.so`.
-- `cmd/skills-fs`: CLI daemon with config reload, PID file, and graceful shutdown.
+- `cmd/skills-fs`: CLI daemon with config reload, PID file, graceful shutdown, config `includes`, environment-variable expansion, and validation that every directory mount exposes an `AGENTS.md` guide.
 - `bench`: required benchmark entry points.
 - `docs`: handoff, architecture, testing, and milestone documents.

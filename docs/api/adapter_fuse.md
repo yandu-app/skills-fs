@@ -6,6 +6,10 @@
 import "github.com/skills-fs/skills-fs/adapter/fuse"
 ```
 
+Package fuse implements a Linux FUSE adapter using go\-fuse/v2.
+
+On non\-Linux platforms the package compiles to a stub that returns ErrNotImplemented for every operation.
+
 ## Index
 
 - [type Server](<#Server>)
