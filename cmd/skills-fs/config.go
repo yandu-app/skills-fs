@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"log/slog"
 	"strconv"
 
 	"github.com/skills-fs/skills-fs/core"
@@ -26,10 +25,11 @@ type MountConfig struct {
 	Mode     string `json:"mode,omitempty"`
 	Data     string `json:"data,omitempty"`
 	Link     string `json:"link,omitempty"`
-	Provider string `json:"provider,omitempty"` // provider ID for API mounts
-	Read     string `json:"read,omitempty"`     // action for API read
-	Write    string `json:"write,omitempty"`    // action for API write
-	Serial   bool   `json:"serial,omitempty"`
+	Provider     string `json:"provider,omitempty"` // provider ID for API mounts
+	Read         string `json:"read,omitempty"`     // action for API read
+	Write        string `json:"write,omitempty"`    // action for API write
+	WriteParams  string `json:"writeParams,omitempty"` // "json" to forward JSON payload as params
+	Serial       bool   `json:"serial,omitempty"`
 }
 
 // ProviderConfig describes an HTTP provider.
@@ -166,7 +166,26 @@ func (mc *MountConfig) toMountEntry() (core.MountEntry, error) {
 			entry.Ops[core.OpRead] = &core.CapConfig{ProviderID: pid, Action: mc.Read}
 		}
 		if mc.Write != "" {
-			entry.Ops[core.OpWrite] = &core.CapConfig{ProviderID: pid, Action: mc.Write}
+			writeCap := &core.CapConfig{ProviderID: pid, Action: mc.Write}
+			if mc.WriteParams == "json" {
+				writeCap.ParamsFn = func(pathParams map[string]string, payload []byte, ctx core.OpContext) (map[string]interface{}, error) {
+					params := make(map[string]interface{}, len(pathParams))
+					for k, v := range pathParams {
+						params[k] = v
+					}
+					if len(payload) > 0 {
+						var body map[string]interface{}
+						if err := json.Unmarshal(payload, &body); err != nil {
+							return nil, err
+						}
+						for k, v := range body {
+							params[k] = v
+						}
+					}
+					return params, nil
+				}
+			}
+			entry.Ops[core.OpWrite] = writeCap
 		}
 		entry.Serial = mc.Serial
 	}

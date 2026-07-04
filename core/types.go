@@ -254,13 +254,17 @@ type SkillConfig struct {
 	Enabled       bool              `json:"enabled"`
 	Name          string            `json:"name"`
 	Description   string            `json:"description"`
+	Version       string            `json:"version,omitempty"`
+	Author        string            `json:"author,omitempty"`
 	License       string            `json:"license,omitempty"`
+	Platforms     []string          `json:"platforms,omitempty"`
 	Compatibility string            `json:"compatibility,omitempty"`
 	Metadata      map[string]string `json:"metadata,omitempty"`
 	AllowedTools  []string          `json:"allowedTools,omitempty"`
 	BodyTemplate  string            `json:"bodyTemplate"`
 	Scripts       []string          `json:"scripts,omitempty"`
 	References    []string          `json:"references,omitempty"`
+	ExposeAtRoot  bool              `json:"exposeAtRoot,omitempty"`
 }
 
 // Stat describes a mounted node, returned by [FileSystem.Stat].

@@ -1980,6 +1980,60 @@ func TestStatSkillDir(t *testing.T) {
 	}
 }
 
+func TestExposeAtRootMountsSkillFile(t *testing.T) {
+	root := t.TempDir()
+	fs := NewFS(GlobalConfig{SkillsRoot: root})
+	if err := fs.Mount("/api", MountEntry{
+		Kind: KindAPI,
+		Mode: 0o444,
+		Skill: &SkillConfig{
+			Name:         "test-skill",
+			Description:  "d",
+			Enabled:      true,
+			ExposeAtRoot: true,
+			BodyTemplate: "# Test\n",
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	st, err := fs.Stat("/SKILL.md", CallerIdentity{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Kind != KindBlob {
+		t.Fatalf("expected /SKILL.md to be blob, got %s", st.Kind)
+	}
+	data, err := fs.Read(context.Background(), "/SKILL.md", CallerIdentity{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data) == 0 {
+		t.Fatal("expected non-empty /SKILL.md")
+	}
+}
+
+func TestExposeAtRootConflict(t *testing.T) {
+	root := t.TempDir()
+	fs := NewFS(GlobalConfig{SkillsRoot: root})
+	if err := fs.Mount("/SKILL.md", MountEntry{Kind: KindBlob, Mode: 0o444, BlobData: []byte("existing")}); err != nil {
+		t.Fatal(err)
+	}
+	err := fs.Mount("/api", MountEntry{
+		Kind: KindAPI,
+		Mode: 0o444,
+		Skill: &SkillConfig{
+			Name:         "test-skill",
+			Description:  "d",
+			Enabled:      true,
+			ExposeAtRoot: true,
+			BodyTemplate: "# Test\n",
+		},
+	})
+	if err == nil {
+		t.Fatal("expected error when /SKILL.md already exists")
+	}
+}
+
 func TestStatSkillFileDeleted(t *testing.T) {
 	root := t.TempDir()
 	fs := NewFS(GlobalConfig{SkillsRoot: root})

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strings"
 	"sync"
 	"text/template"
 )
@@ -38,8 +39,17 @@ func (g *SkillGenerator) Generate(cfg SkillConfig) error {
 	body.WriteString("---\n")
 	body.WriteString("name: " + cfg.Name + "\n")
 	body.WriteString("description: " + cfg.Description + "\n")
+	if cfg.Version != "" {
+		body.WriteString("version: " + cfg.Version + "\n")
+	}
+	if cfg.Author != "" {
+		body.WriteString("author: " + cfg.Author + "\n")
+	}
 	if cfg.License != "" {
 		body.WriteString("license: " + cfg.License + "\n")
+	}
+	if len(cfg.Platforms) > 0 {
+		body.WriteString("platforms: [" + strings.Join(cfg.Platforms, ", ") + "]\n")
 	}
 	if cfg.Compatibility != "" {
 		body.WriteString("compatibility: " + cfg.Compatibility + "\n")

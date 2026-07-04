@@ -107,6 +107,31 @@ func TestBuildFSWithProvider(t *testing.T) {
 	}
 }
 
+func TestBuildFSWriteParamsJSON(t *testing.T) {
+	cfg := &Config{
+		Providers: []ProviderConfig{{ID: "remote", URL: "http://localhost:9000"}},
+		Mounts: []MountConfig{
+			{Path: "/clear", Kind: "api", Provider: "remote", Write: "clear_alert", WriteParams: "json"},
+		},
+	}
+	fsys, err := cfg.BuildFS()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	payload := []byte(`{"name": "my_alert"}`)
+	err = fsys.Write(ctx, "/clear", payload, core.CallerIdentity{})
+	if err == nil {
+		t.Fatal("expected provider error from unreachable backend")
+	}
+	// A provider error means the request reached the HTTP provider after
+	// ParamsFn parsed the JSON payload. EINVAL or missing-params would
+	// indicate a ParamsFn or wiring bug.
+	if core.IsCode(err, core.EINVAL) {
+		t.Fatalf("ParamsFn should not return EINVAL for valid JSON: %v", err)
+	}
+}
+
 func TestBuildFSWithDirAndStream(t *testing.T) {
 	cfg := &Config{
 		Mounts: []MountConfig{

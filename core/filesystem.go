@@ -272,6 +272,24 @@ func (fs *FileSystem) Mount(p string, entry MountEntry) (err error) {
 			_, _ = fs.router.remove(path)
 			return err
 		}
+		if mounted.Skill.ExposeAtRoot {
+			data, err := fs.skills.ReadSkillFile(mounted.Skill.Name)
+			if err != nil {
+				return err
+			}
+			rootEntry := MountEntry{
+				Path:     "/SKILL.md",
+				Kind:     KindBlob,
+				Mode:     0o444,
+				BlobData: data,
+				UID:      fs.cfg.DefaultUID,
+				GID:      fs.cfg.DefaultGID,
+			}
+			if _, err := fs.router.add(rootEntry); err != nil {
+				return err
+			}
+			fs.events.emit(Event{Path: "/SKILL.md", Kind: EventCreate})
+		}
 	}
 	fs.events.emit(Event{Path: path, Kind: EventCreate})
 	return nil

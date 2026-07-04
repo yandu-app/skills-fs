@@ -3,9 +3,11 @@
 package fuse
 
 import (
+	"context"
 	"syscall"
 	"testing"
 
+	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/skills-fs/skills-fs/core"
 )
@@ -113,4 +115,46 @@ func TestOpenFlagsFromFUSE(t *testing.T) {
 			t.Fatalf("flags=%#x: got %v, want %v", tc.flags, got, tc.want)
 		}
 	}
+}
+
+func TestFileHandleSetattrAPI(t *testing.T) {
+	fsys := core.NewFS(core.GlobalConfig{})
+	if err := fsys.RegisterProvider(&staticProvider{data: []byte(`{"ok":true}`)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := fsys.Mount("/api", core.MountEntry{
+		Kind: core.KindAPI,
+		Mode: 0o444,
+		Ops: map[core.OpCode]*core.CapConfig{
+			core.OpRead: {ProviderID: "static", Action: "get"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	h, err := fsys.Open("/api", core.OpenRead, core.CallerIdentity{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fh := &fileHandle{h: h, fsys: fsys, ino: 123, readOnly: true}
+
+	var in fuse.SetAttrIn
+	in.Valid = fuse.FATTR_SIZE
+	in.Size = 0
+	var out fuse.AttrOut
+	errno := fh.Setattr(context.Background(), &in, &out)
+	if errno != fs.OK {
+		t.Fatalf("expected OK for API size setattr, got errno=%d", errno)
+	}
+	if out.Size != 1024*1024 {
+		t.Fatalf("expected API placeholder size, got %d", out.Size)
+	}
+}
+
+type staticProvider struct {
+	data []byte
+}
+
+func (p *staticProvider) ID() string { return "static" }
+func (p *staticProvider) Invoke(ctx context.Context, action string, params map[string]interface{}) (*core.ProviderResult, error) {
+	return &core.ProviderResult{Data: p.data}, nil
 }

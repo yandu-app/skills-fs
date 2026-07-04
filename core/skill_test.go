@@ -126,7 +126,10 @@ func TestSkillGenerateWithOptionalFields(t *testing.T) {
 	cfg := SkillConfig{
 		Name:          "full",
 		Description:   "all fields",
+		Version:       "1.0.0",
+		Author:        "Ezra",
 		License:       "MIT",
+		Platforms:     []string{"linux"},
 		Compatibility: "go1.25",
 		AllowedTools:  []string{"tool-a", "tool-b"},
 		Metadata:      map[string]string{"key": "value"},
@@ -151,5 +154,14 @@ func TestSkillGenerateWithOptionalFields(t *testing.T) {
 	}
 	if !strings.Contains(content, "metadata:") {
 		t.Fatal("missing metadata in output")
+	}
+	if !strings.Contains(content, "version: 1.0.0") {
+		t.Fatal("missing version in output")
+	}
+	if !strings.Contains(content, "author: Ezra") {
+		t.Fatal("missing author in output")
+	}
+	if !strings.Contains(content, "platforms: [linux]") {
+		t.Fatal("missing platforms in output")
 	}
 }
