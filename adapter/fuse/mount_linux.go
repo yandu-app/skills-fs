@@ -40,11 +40,6 @@ func (s *Server) Mount(ctx context.Context) error {
 		return err
 	}
 	s.state = &linuxState{srv: server, root: root}
-	go s.state.(*linuxState).srv.Serve()
-	if err := s.state.(*linuxState).srv.WaitMount(); err != nil {
-		_ = s.state.(*linuxState).srv.Unmount()
-		return err
-	}
 
 	// Wire core events to kernel inotify invalidations.
 	s.fs.RegisterNotifier(func(e core.Event) {

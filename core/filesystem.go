@@ -120,6 +120,9 @@ func NewFS(cfg GlobalConfig) *FileSystem {
 	return fs
 }
 
+// Skills returns the SkillGenerator for this filesystem.
+func (fs *FileSystem) Skills() *SkillGenerator { return fs.skills }
+
 // CloseAllHandles forcibly closes every open handle, flushing buffered writes
 // and releasing advisory locks. Errors from individual closes are discarded;
 // callers should treat the filesystem as unusable after this call.

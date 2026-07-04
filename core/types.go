@@ -251,16 +251,16 @@ type ProviderResult struct {
 
 // SkillConfig describes a skill to be generated into the /skills namespace.
 type SkillConfig struct {
-	Enabled       bool
-	Name          string
-	Description   string
-	License       string
-	Compatibility string
-	Metadata      map[string]string
-	AllowedTools  []string
-	BodyTemplate  string
-	Scripts       []string
-	References    []string
+	Enabled       bool              `json:"enabled"`
+	Name          string            `json:"name"`
+	Description   string            `json:"description"`
+	License       string            `json:"license,omitempty"`
+	Compatibility string            `json:"compatibility,omitempty"`
+	Metadata      map[string]string `json:"metadata,omitempty"`
+	AllowedTools  []string          `json:"allowedTools,omitempty"`
+	BodyTemplate  string            `json:"bodyTemplate"`
+	Scripts       []string          `json:"scripts,omitempty"`
+	References    []string          `json:"references,omitempty"`
 }
 
 // Stat describes a mounted node, returned by [FileSystem.Stat].

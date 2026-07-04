@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"log/slog"
 	"strconv"
 
 	"github.com/skills-fs/skills-fs/core"
@@ -14,6 +15,8 @@ import (
 type Config struct {
 	Mounts    []MountConfig    `json:"mounts"`
 	Providers []ProviderConfig `json:"providers"`
+	SkillsRoot string          `json:"skillsRoot,omitempty"`
+	Skills    []core.SkillConfig `json:"skills,omitempty"`
 }
 
 // MountConfig describes a single mount point.
@@ -51,7 +54,14 @@ func LoadConfig(path string) (*Config, error) {
 // BuildFS creates a FileSystem from the config, registering providers and
 // mounting entries. On error the returned filesystem may be partially built.
 func (c *Config) BuildFS() (*core.FileSystem, error) {
-	fs := core.NewFS(core.GlobalConfig{})
+	fs := core.NewFS(core.GlobalConfig{SkillsRoot: c.SkillsRoot})
+
+	// Generate skill files
+	for _, sc := range c.Skills {
+		if err := fs.Skills().Generate(sc); err != nil {
+			return nil, fmt.Errorf("generate skill %s: %w", sc.Name, err)
+		}
+	}
 
 	for _, pc := range c.Providers {
 		p := http.NewProvider(pc.ID, pc.URL)
