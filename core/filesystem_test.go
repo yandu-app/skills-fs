@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -2299,3 +2300,162 @@ func (p *dynamicProvider) Invoke(_ context.Context, action string, params map[st
 	return nil, fmt.Errorf("unknown action %s", action)
 }
 
+func TestWritebackStoresResult(t *testing.T) {
+	provider := &fakeProvider{id: "p", response: []byte(`{"ok":true}`)}
+	fs := NewFS(GlobalConfig{})
+	if err := fs.RegisterProvider(provider); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Mount("/cmd", MountEntry{
+		Kind:      KindAPI,
+		Mode:      0o666,
+		Writeback: true,
+		Ops: map[OpCode]*CapConfig{
+			OpRead:  {ProviderID: "p", Action: "read"},
+			OpWrite: {ProviderID: "p", Action: "write"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Write succeeds — result should be stored in writeback map.
+	if err := fs.Write(context.Background(), "/cmd", []byte(`{"x":1}`), CallerIdentity{}); err != nil {
+		t.Fatal(err)
+	}
+	// Read should return the stored result, not invoke the provider again.
+	data, err := fs.Read(context.Background(), "/cmd", CallerIdentity{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != `{"ok":true}` {
+		t.Fatalf("expected writeback result, got %s", data)
+	}
+}
+
+func TestWritebackErrorReturnsSchema(t *testing.T) {
+	provider := &fakeProvider{id: "p", err: errors.New("provider failed")}
+	fs := NewFS(GlobalConfig{})
+	if err := fs.RegisterProvider(provider); err != nil {
+		t.Fatal(err)
+	}
+	schema := `{"example":{"key":"value"}}`
+	if err := fs.Mount("/cmd", MountEntry{
+		Kind:      KindAPI,
+		Mode:      0o666,
+		Writeback: true,
+		Schema:    schema,
+		Ops: map[OpCode]*CapConfig{
+			OpWrite: {ProviderID: "p", Action: "write"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Write fails — writeback should store schema error, but return nil (success).
+	if err := fs.Write(context.Background(), "/cmd", []byte(`{"x":1}`), CallerIdentity{}); err != nil {
+		t.Fatalf("writeback should return nil on error, got: %v", err)
+	}
+	// Read should return the schema error JSON.
+	data, err := fs.Read(context.Background(), "/cmd", CallerIdentity{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var resp map[string]interface{}
+	if err := json.Unmarshal(data, &resp); err != nil {
+		t.Fatalf("writeback read should return valid JSON: %s", data)
+	}
+	if _, ok := resp["error"]; !ok {
+		t.Fatalf("expected 'error' field in writeback result: %s", data)
+	}
+	if _, ok := resp["expected_schema"]; !ok {
+		t.Fatalf("expected 'expected_schema' field in writeback result: %s", data)
+	}
+	if _, ok := resp["hint"]; !ok {
+		t.Fatalf("expected 'hint' field in writeback result: %s", data)
+	}
+}
+
+func TestNoWritebackWithoutFlag(t *testing.T) {
+	provider := &fakeProvider{id: "p", response: []byte(`{"ok":true}`)}
+	fs := NewFS(GlobalConfig{})
+	if err := fs.RegisterProvider(provider); err != nil {
+		t.Fatal(err)
+	}
+	// Writeback=false (default): read should invoke provider, not return cached.
+	if err := fs.Mount("/cmd", MountEntry{
+		Kind: KindAPI,
+		Mode:      0o666,
+		Ops: map[OpCode]*CapConfig{
+			OpRead:  {ProviderID: "p", Action: "read"},
+			OpWrite: {ProviderID: "p", Action: "write"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	provider.calls = nil
+	// Write.
+	if err := fs.Write(context.Background(), "/cmd", []byte(`{"x":1}`), CallerIdentity{}); err != nil {
+		t.Fatal(err)
+	}
+	// Read should invoke provider (not hit writeback cache).
+	_, err := fs.Read(context.Background(), "/cmd", CallerIdentity{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(provider.calls) == 0 {
+		t.Fatal("expected provider to be called on read when writeback is disabled")
+	}
+}
+
+func TestRawWriteParamsPassesTrimmedPayload(t *testing.T) {
+	provider := &fakeProvider{id: "p", response: []byte(`{"ok":true}`)}
+	fs := NewFS(GlobalConfig{})
+	if err := fs.RegisterProvider(provider); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Mount("/raw-cmd/:id", MountEntry{
+		Kind:      KindAPI,
+		Mode:      0o666,
+		Writeback: true,
+		Ops: map[OpCode]*CapConfig{
+			OpWrite: {
+				ProviderID: "p",
+				Action:     "raw.write",
+				ParamsFn: func(pathParams map[string]string, payload []byte, _ OpContext) (map[string]interface{}, error) {
+					params := make(map[string]interface{}, len(pathParams)+1)
+					for k, v := range pathParams {
+						params[k] = v
+					}
+					params["_payload"] = func() string {
+						s := string(payload)
+						for len(s) > 0 && (s[len(s)-1] == '\n' || s[len(s)-1] == '\r' || s[len(s)-1] == ' ') {
+							s = s[:len(s)-1]
+						}
+						for len(s) > 0 && (s[0] == '\n' || s[0] == '\r' || s[0] == ' ') {
+							s = s[1:]
+						}
+						return s
+					}()
+					return params, nil
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Write(context.Background(), "/raw-cmd/42", []byte("hello\n"), CallerIdentity{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(provider.calls) != 1 {
+		t.Fatalf("expected 1 call, got %d", len(provider.calls))
+	}
+	payload, ok := provider.calls[0].Params["_payload"]
+	if !ok {
+		t.Fatal("expected _payload in params")
+	}
+	if payload != "hello" {
+		t.Fatalf("expected trimmed payload 'hello', got %q", payload)
+	}
+	id, ok := provider.calls[0].Params["id"]
+	if !ok || id != "42" {
+		t.Fatalf("expected path param id=42, got %v", id)
+	}
+}

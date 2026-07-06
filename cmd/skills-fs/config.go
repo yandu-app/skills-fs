@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/skills-fs/skills-fs/core"
 	"github.com/skills-fs/skills-fs/provider/http"
@@ -32,6 +33,8 @@ type MountConfig struct {
 	Write        string `json:"write,omitempty"`    // action for API write
 	WriteParams  string `json:"writeParams,omitempty"` // "json" to forward JSON payload as params
 	Serial       bool   `json:"serial,omitempty"`
+	Writeback    bool   `json:"writeback,omitempty"` // store write result for subsequent reads
+	Schema       string `json:"schema,omitempty"`    // JSON schema example for error messages
 	Agents       *bool  `json:"agents,omitempty"`   // nil=required AGENTS.md for dirs; false=opt-out
 }
 
@@ -265,7 +268,11 @@ func (mc *MountConfig) toMountEntry() (core.MountEntry, error) {
 					if len(payload) > 0 {
 						var body map[string]interface{}
 						if err := json.Unmarshal(payload, &body); err != nil {
-							return nil, fmt.Errorf("write to %s expects a valid JSON object; got %q: %w", mc.Path, string(payload), err)
+							msg := fmt.Sprintf("write to %s expects a valid JSON object; got %q: %v", mc.Path, string(payload), err)
+							if mc.Schema != "" {
+								msg += fmt.Sprintf(". Expected schema: %s", mc.Schema)
+							}
+							return nil, fmt.Errorf("%s", msg)
 						}
 						for k, v := range body {
 							params[k] = v
@@ -273,10 +280,21 @@ func (mc *MountConfig) toMountEntry() (core.MountEntry, error) {
 					}
 					return params, nil
 				}
+			} else if mc.WriteParams == "raw" {
+				writeCap.ParamsFn = func(pathParams map[string]string, payload []byte, ctx core.OpContext) (map[string]interface{}, error) {
+					params := make(map[string]interface{}, len(pathParams)+1)
+					for k, v := range pathParams {
+						params[k] = v
+					}
+					params["_payload"] = strings.TrimSpace(string(payload))
+					return params, nil
+				}
 			}
 			entry.Ops[core.OpWrite] = writeCap
 		}
 		entry.Serial = mc.Serial
+		entry.Writeback = mc.Writeback
+		entry.Schema = mc.Schema
 	case core.KindDynamicDir:
 		entry.Ops = make(map[core.OpCode]*core.CapConfig)
 		pid := mc.Provider
