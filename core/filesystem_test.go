@@ -2447,14 +2447,14 @@ func TestRawWriteParamsPassesTrimmedPayload(t *testing.T) {
 	if len(provider.calls) != 1 {
 		t.Fatalf("expected 1 call, got %d", len(provider.calls))
 	}
-	payload, ok := provider.calls[0].Params["_payload"]
+	payload, ok := provider.calls[0].params["_payload"]
 	if !ok {
 		t.Fatal("expected _payload in params")
 	}
 	if payload != "hello" {
 		t.Fatalf("expected trimmed payload 'hello', got %q", payload)
 	}
-	id, ok := provider.calls[0].Params["id"]
+	id, ok := provider.calls[0].params["id"]
 	if !ok || id != "42" {
 		t.Fatalf("expected path param id=42, got %v", id)
 	}
