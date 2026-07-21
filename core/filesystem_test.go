@@ -1056,19 +1056,19 @@ func TestSkillGenerateAndUnmountCleanup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(root, "greeting", "SKILL.md")
-	data, err := os.ReadFile(path)
+	data, err := fs.Read(context.Background(), "/skills/greeting/SKILL.md", CallerIdentity{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if string(data) == "" || !strings.Contains(string(data), "name: greeting") {
 		t.Fatalf("unexpected skill content: %q", data)
 	}
+	// Logical generate writes no disk file under skillsRoot.
+	if _, err := os.Stat(filepath.Join(root, "greeting", "SKILL.md")); !os.IsNotExist(err) {
+		t.Fatalf("logical generate should not write a disk file: %v", err)
+	}
 	if err := fs.Unmount("/skills/greet"); err != nil {
 		t.Fatal(err)
-	}
-	if _, err := os.Stat(filepath.Join(root, "greeting")); !os.IsNotExist(err) {
-		t.Fatalf("skill dir should be removed, stat err=%v", err)
 	}
 }
 
@@ -1128,6 +1128,34 @@ func TestGeneratedSkillsVirtualNamespace(t *testing.T) {
 	}
 }
 
+func TestGeneratedSkillFileIsReadOnly(t *testing.T) {
+	fs := NewFS(GlobalConfig{SkillsRoot: t.TempDir()})
+	if err := fs.Mount("/tools/greet", MountEntry{
+		Kind: KindAPI,
+		Mode: 0o444,
+		Skill: &SkillConfig{
+			Enabled:      true,
+			Name:         "greeting",
+			Description:  "Provides greeting text.",
+			BodyTemplate: "Read with cat.",
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	st, err := fs.Stat("/skills/greeting/SKILL.md", CallerIdentity{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Mode&0o200 != 0 {
+		t.Fatalf("generated SKILL.md must be read-only, mode=%o", st.Mode)
+	}
+	// Generated config files are regenerated each start, so writes are pointless
+	// and must be rejected.
+	if err := fs.Write(context.Background(), "/skills/greeting/SKILL.md", []byte("overwrite"), CallerIdentity{}); err == nil {
+		t.Fatal("expected write to generated SKILL.md to be denied")
+	}
+}
+
 func TestSkillGenerateRichFrontmatterAndTemplate(t *testing.T) {
 	root := t.TempDir()
 	gen := NewSkillGenerator(root)
@@ -1144,7 +1172,7 @@ func TestSkillGenerateRichFrontmatterAndTemplate(t *testing.T) {
 	if err := gen.Generate(cfg); err != nil {
 		t.Fatal(err)
 	}
-	data, err := os.ReadFile(filepath.Join(root, "rich-skill", "SKILL.md"))
+	data, err := gen.ReadSkillFile("rich-skill")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1171,10 +1199,10 @@ func TestSkillValidationFailures(t *testing.T) {
 }
 
 func TestSkillGeneratorRootAndRemoveValidation(t *testing.T) {
+	// Logical generate needs no root; an empty root is fine.
 	gen := NewSkillGenerator("")
-	err := gen.Generate(SkillConfig{Enabled: true, Name: "x", Description: "x", BodyTemplate: "x"})
-	if !IsCode(err, EINVAL) {
-		t.Fatalf("expected missing root EINVAL, got %v", err)
+	if err := gen.Generate(SkillConfig{Enabled: true, Name: "x", Description: "x", BodyTemplate: "x"}); err != nil {
+		t.Fatalf("expected logical generate to succeed with empty root, got %v", err)
 	}
 	gen = NewSkillGenerator(t.TempDir())
 	if err := gen.Remove("Bad_Name"); !IsCode(err, EINVAL) {
@@ -2087,7 +2115,7 @@ func TestExposeAtRootConflict(t *testing.T) {
 	}
 }
 
-func TestStatSkillFileDeleted(t *testing.T) {
+func TestStatSkillFileServedFromMemory(t *testing.T) {
 	root := t.TempDir()
 	fs := NewFS(GlobalConfig{SkillsRoot: root})
 	if err := fs.skills.Generate(SkillConfig{
@@ -2097,12 +2125,20 @@ func TestStatSkillFileDeleted(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Remove(filepath.Join(root, "test-skill", "SKILL.md")); err != nil {
+	// Logical generate must NOT write a disk file.
+	if _, err := os.Stat(filepath.Join(root, "test-skill", "SKILL.md")); !os.IsNotExist(err) {
+		t.Fatalf("logical generate should not write a disk file: %v", err)
+	}
+	// ... yet the skill is served from memory.
+	if _, err := fs.Stat("/skills/test-skill/SKILL.md", CallerIdentity{}); err != nil {
+		t.Fatalf("skill should be served from memory: %v", err)
+	}
+	// Removing the skill (in-memory) makes Stat fail.
+	if err := fs.skills.Remove("test-skill"); err != nil {
 		t.Fatal(err)
 	}
-	_, err := fs.Stat("/skills/test-skill/SKILL.md", CallerIdentity{})
-	if err == nil {
-		t.Fatal("expected error when skill file is missing")
+	if _, err := fs.Stat("/skills/test-skill/SKILL.md", CallerIdentity{}); err == nil {
+		t.Fatal("expected error after skill removed from memory")
 	}
 }
 

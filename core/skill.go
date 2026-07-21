@@ -2,37 +2,39 @@ package core
 
 import (
 	"bytes"
-	"os"
-	"path/filepath"
 	"regexp"
 	"sort"
-	"strings"
 	"sync"
 	"text/template"
 )
 
 var skillNameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 
+// skillState holds the LOGICALLY generated (in-memory, never disk-written)
+// content for a skill. Keeping this out of the filesystem preserves any
+// static files underneath a FUSE overlay on the skill directory.
+type skillState struct {
+	cfg        SkillConfig
+	skillBody  []byte
+	agentsBody []byte
+}
+
 type SkillGenerator struct {
-	root   string
+	root   string // retained for API compatibility; logical generate does not write here
 	mu     sync.RWMutex
-	skills map[string]SkillConfig
+	skills map[string]*skillState
 }
 
 func NewSkillGenerator(root string) *SkillGenerator {
-	return &SkillGenerator{root: root, skills: make(map[string]SkillConfig)}
+	return &SkillGenerator{root: root, skills: make(map[string]*skillState)}
 }
 
+// Generate renders a skill's SKILL.md (and AGENTS.md when AgentsTemplate is
+// set) INTO MEMORY only. It never writes to disk, so a FUSE overlay on the
+// skill directory can serve the generated content while the static files
+// underneath remain intact (unmount restores them).
 func (g *SkillGenerator) Generate(cfg SkillConfig) error {
-	if g.root == "" {
-		return posix(EINVAL, OpWrite, "skillsRoot", nil)
-	}
 	if err := validateSkillConfig(cfg); err != nil {
-		return err
-	}
-	dir := filepath.Join(g.root, cfg.Name)
-	// #nosec G301 -- skill directories are intentionally browsable.
-	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
 	var body bytes.Buffer
@@ -49,7 +51,7 @@ func (g *SkillGenerator) Generate(cfg SkillConfig) error {
 		body.WriteString("license: " + cfg.License + "\n")
 	}
 	if len(cfg.Platforms) > 0 {
-		body.WriteString("platforms: [" + strings.Join(cfg.Platforms, ", ") + "]\n")
+		body.WriteString("platforms: [" + joinPlatforms(cfg.Platforms) + "]\n")
 	}
 	if cfg.Compatibility != "" {
 		body.WriteString("compatibility: " + cfg.Compatibility + "\n")
@@ -72,20 +74,16 @@ func (g *SkillGenerator) Generate(cfg SkillConfig) error {
 		}
 	}
 	body.WriteString("---\n\n")
-	tpl, err := template.New("skill").Parse(cfg.BodyTemplate)
-	if err != nil {
-		return err
+	if cfg.BodyTemplate != "" {
+		tpl, err := template.New("skill").Parse(cfg.BodyTemplate)
+		if err != nil {
+			return err
+		}
+		if err := tpl.Execute(&body, cfg); err != nil {
+			return err
+		}
 	}
-	if err := tpl.Execute(&body, cfg); err != nil {
-		return err
-	}
-	if body.Len() == 0 {
-		return posix(EINVAL, OpWrite, cfg.Name, nil)
-	}
-	// #nosec G306 -- skill metadata is intentionally world-readable.
-	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), body.Bytes(), 0o644); err != nil {
-		return err
-	}
+	st := &skillState{cfg: cfg, skillBody: append([]byte(nil), body.Bytes()...)}
 	if cfg.AgentsTemplate != "" {
 		var agentsBody bytes.Buffer
 		agentsBody.WriteString("---\n")
@@ -99,25 +97,30 @@ func (g *SkillGenerator) Generate(cfg SkillConfig) error {
 		if err := agentsTpl.Execute(&agentsBody, cfg); err != nil {
 			return err
 		}
-		if err := os.WriteFile(filepath.Join(dir, "AGENTS.md"), agentsBody.Bytes(), 0o644); err != nil {
-			return err
-		}
+		st.agentsBody = append([]byte(nil), agentsBody.Bytes()...)
 	}
 	g.mu.Lock()
-	g.skills[cfg.Name] = cfg
+	g.skills[cfg.Name] = st
 	g.mu.Unlock()
 	return nil
 }
 
-func (g *SkillGenerator) Remove(name string) error {
-	if g.root == "" {
-		return nil
+func joinPlatforms(p []string) string {
+	if len(p) == 0 {
+		return ""
 	}
+	out := p[0]
+	for _, s := range p[1:] {
+		out += ", " + s
+	}
+	return out
+}
+
+// Remove drops a skill from memory. It never touches the filesystem, so it
+// cannot delete a static skill directory overlaid by FUSE.
+func (g *SkillGenerator) Remove(name string) error {
 	if !skillNameRE.MatchString(name) {
 		return posix(EINVAL, OpWrite, name, nil)
-	}
-	if err := os.RemoveAll(filepath.Join(g.root, name)); err != nil {
-		return err
 	}
 	g.mu.Lock()
 	delete(g.skills, name)
@@ -129,8 +132,8 @@ func (g *SkillGenerator) List() []SkillConfig {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 	out := make([]SkillConfig, 0, len(g.skills))
-	for _, cfg := range g.skills {
-		out = append(out, cfg)
+	for _, st := range g.skills {
+		out = append(out, st.cfg)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
@@ -143,21 +146,33 @@ func (g *SkillGenerator) Exists(name string) bool {
 	return ok
 }
 
+// ReadSkillFile returns the in-memory generated SKILL.md body for a skill.
 func (g *SkillGenerator) ReadSkillFile(name string) ([]byte, error) {
 	if !skillNameRE.MatchString(name) {
 		return nil, posix(EINVAL, OpRead, name, nil)
 	}
 	g.mu.RLock()
-	_, ok := g.skills[name]
+	st, ok := g.skills[name]
 	g.mu.RUnlock()
 	if !ok {
 		return nil, posix(ENOENT, OpRead, name, nil)
 	}
-	data, err := os.ReadFile(filepath.Join(g.root, name, "SKILL.md"))
-	if err != nil {
-		return nil, err
+	return st.skillBody, nil
+}
+
+// ReadAgentsFile returns the in-memory generated AGENTS.md body (empty if no
+// agents template was set).
+func (g *SkillGenerator) ReadAgentsFile(name string) ([]byte, error) {
+	if !skillNameRE.MatchString(name) {
+		return nil, posix(EINVAL, OpRead, name, nil)
 	}
-	return data, nil
+	g.mu.RLock()
+	st, ok := g.skills[name]
+	g.mu.RUnlock()
+	if !ok {
+		return nil, posix(ENOENT, OpRead, name, nil)
+	}
+	return st.agentsBody, nil
 }
 
 func validateSkillConfig(cfg SkillConfig) error {

@@ -6,9 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"path"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -312,8 +310,7 @@ func (fs *FileSystem) MountSkillAtRoot(cfg SkillConfig) error {
 	fs.events.emit(Event{Path: "/SKILL.md", Kind: EventCreate})
 
 	if cfg.AgentsTemplate != "" {
-		agentsPath := filepath.Join(fs.skills.root, cfg.Name, "AGENTS.md")
-		agentsData, err := os.ReadFile(agentsPath)
+		agentsData, err := fs.skills.ReadAgentsFile(cfg.Name)
 		if err != nil {
 			return err
 		}

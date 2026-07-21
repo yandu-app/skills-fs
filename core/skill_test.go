@@ -1,8 +1,6 @@
 package core
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -23,8 +21,8 @@ func TestReadSkillFileNotFound(t *testing.T) {
 	}
 }
 
-func TestSkillGeneratorRemoveErrors(t *testing.T) {
-	// Empty root returns nil without work.
+func TestSkillGeneratorRemove(t *testing.T) {
+	// Empty root returns nil without work (logical generate needs no root).
 	genEmpty := NewSkillGenerator("")
 	if err := genEmpty.Remove("anything"); err != nil {
 		t.Fatalf("expected nil for empty root, got %v", err)
@@ -36,27 +34,19 @@ func TestSkillGeneratorRemoveErrors(t *testing.T) {
 		t.Fatalf("expected EINVAL, got %v", err)
 	}
 
-	// RemoveAll error path: create a skill dir and make it unwritable.
-	// Windows does not honor Unix permission bits, so skip.
-	if _, err := os.Stat("/proc"); os.IsNotExist(err) {
-		t.Skip("skipping unwritable directory test on Windows")
-	}
-	root := t.TempDir()
-	gen2 := NewSkillGenerator(root)
-	if err := gen2.Generate(SkillConfig{
+	// Removing a generated skill drops it from memory (and never touches disk).
+	if err := gen.Generate(SkillConfig{
 		Name:        "test-skill",
 		Description: "d",
 		Enabled:     true,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	skillDir := filepath.Join(root, "test-skill")
-	if err := os.Chmod(skillDir, 0o000); err != nil {
-		t.Fatal(err)
+	if err := gen.Remove("test-skill"); err != nil {
+		t.Fatalf("remove: %v", err)
 	}
-	defer os.Chmod(skillDir, 0o755) // ensure cleanup succeeds
-	if err := gen2.Remove("test-skill"); err == nil {
-		t.Fatal("expected error when directory is unwritable")
+	if gen.Exists("test-skill") {
+		t.Fatal("skill should be gone from memory after remove")
 	}
 }
 
