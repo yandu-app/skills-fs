@@ -22,12 +22,19 @@ type Provider struct {
 	retryBaseDelay time.Duration
 }
 
+// defaultTimeout bounds every provider call so skills-fs always answers a FUSE
+// request within this window (success or error). Without it, a slow/hung
+// provider makes skills-fs block forever, and the kernel parks the FUSE reader
+// in uninterruptible (D) sleep. A bounded timeout turns a permanent wedge into
+// at most a ~15s transient stall that self-recovers.
+const defaultTimeout = 15 * time.Second
+
 // NewProvider creates an HTTP provider that POSTs to baseURL.
 func NewProvider(id, baseURL string) *Provider {
 	return &Provider{
 		id:      id,
 		baseURL: baseURL,
-		client:  http.DefaultClient,
+		client:  &http.Client{Timeout: defaultTimeout},
 	}
 }
 
@@ -35,6 +42,13 @@ func NewProvider(id, baseURL string) *Provider {
 func (p *Provider) WithRetry(count int, baseDelay time.Duration) *Provider {
 	p.retryCount = count
 	p.retryBaseDelay = baseDelay
+	return p
+}
+
+// WithTimeout overrides the per-request timeout (useful from tests; production
+// uses the defaultTimeout set in NewProvider).
+func (p *Provider) WithTimeout(d time.Duration) *Provider {
+	p.client = &http.Client{Timeout: d}
 	return p
 }
 

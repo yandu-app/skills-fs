@@ -50,6 +50,32 @@ func TestHTTPProviderInvoke(t *testing.T) {
 	}
 }
 
+func TestHTTPProviderTimeoutBounded(t *testing.T) {
+	// A server that never responds. Without a client timeout skills-fs would
+	// block here forever, wedging the FUSE reader in D-state; the default
+	// client timeout must bound the call.
+	hang := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-hang:
+		case <-r.Context().Done():
+		}
+	}))
+	defer server.Close()   // runs after close(hang) — LIFO defer order
+	defer close(hang)      // release the handler so server.Close() doesn't wait on it
+
+	p := NewProvider("remote", server.URL).WithTimeout(150 * time.Millisecond)
+	start := time.Now()
+	_, err := p.Invoke(context.Background(), "hang", nil)
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Fatal("expected error from hanging provider, got nil")
+	}
+	if elapsed > 2*time.Second {
+		t.Fatalf("Invoke was not bounded by the timeout; took %v", elapsed)
+	}
+}
+
 func TestHTTPProviderNon2xxReturnsError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
