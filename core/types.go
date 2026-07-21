@@ -157,6 +157,9 @@ type MountEntry struct {
 	Visibility   string
 	Namespace    string // empty = global namespace
 
+	Writeback bool   // when true, write results are stored for subsequent reads
+	Schema    string // JSON schema example; embedded in write error messages
+
 	BlobData []byte
 	LinkPath string
 	serial   *serialQueue
@@ -263,7 +266,9 @@ type SkillConfig struct {
 	Metadata      map[string]string `json:"metadata,omitempty"`
 	AllowedTools  []string          `json:"allowedTools,omitempty"`
 	BodyTemplate  string            `json:"bodyTemplate"`
+	BodyTemplateFile string         `json:"bodyTemplateFile,omitempty"` // read bodyTemplate from this file (relative to config dir)
 	AgentsTemplate string           `json:"agentsTemplate,omitempty"`
+	AgentsTemplateFile string       `json:"agentsTemplateFile,omitempty"` // read agentsTemplate from this file
 	Scripts       []string          `json:"scripts,omitempty"`
 	References    []string          `json:"references,omitempty"`
 	ExposeAtRoot  bool              `json:"exposeAtRoot,omitempty"`

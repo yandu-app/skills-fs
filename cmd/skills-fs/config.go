@@ -27,6 +27,7 @@ type MountConfig struct {
 	Kind     string `json:"kind"`
 	Mode     string `json:"mode,omitempty"`
 	Data     string `json:"data,omitempty"`
+	DataFile string `json:"dataFile,omitempty"` // read blob content from this file (relative to config dir)
 	Link     string `json:"link,omitempty"`
 	Provider     string `json:"provider,omitempty"` // provider ID for API mounts
 	Read         string `json:"read,omitempty"`     // action for API read
@@ -35,6 +36,7 @@ type MountConfig struct {
 	Serial       bool   `json:"serial,omitempty"`
 	Writeback    bool   `json:"writeback,omitempty"` // store write result for subsequent reads
 	Schema       string `json:"schema,omitempty"`    // JSON schema example for error messages
+	SchemaFile   string `json:"schemaFile,omitempty"` // read schema from this file (relative to config dir)
 	Agents       *bool  `json:"agents,omitempty"`   // nil=required AGENTS.md for dirs; false=opt-out
 }
 
@@ -57,9 +59,16 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, err
 	}
 
+	// Resolve external file refs (*File fields) into their inline counterparts
+	// BEFORE env expansion and includes-merge. Each included config resolves its
+	// own refs in its own recursive LoadConfig call, so we only touch this level.
+	baseDir := filepath.Dir(path)
+	if err := cfg.resolveFileRefs(baseDir); err != nil {
+		return nil, err
+	}
+
 	cfg.expandEnv()
 
-	baseDir := filepath.Dir(path)
 	seen := map[string]bool{path: true}
 	for _, inc := range cfg.Includes {
 		incPath := inc
@@ -130,6 +139,64 @@ func (c *Config) expandEnv() {
 			s.References[j] = os.ExpandEnv(s.References[j])
 		}
 	}
+}
+
+// resolveFileRefs reads any "*File" references (blob dataFile/schemaFile, skill
+// bodyTemplateFile/agentsTemplateFile) into their inline counterparts, so prose
+// can live in real files instead of bloating the JSON. Paths resolve relative to
+// baseDir (the config file's directory), exactly like "includes". A set *File
+// field overrides any inline value; an unreadable file is a hard error. Env
+// expansion of the resolved content happens in the subsequent expandEnv pass.
+func (c *Config) resolveFileRefs(baseDir string) error {
+	for i := range c.Mounts {
+		m := &c.Mounts[i]
+		if m.DataFile != "" {
+			s, err := readFileRef(baseDir, m.DataFile)
+			if err != nil {
+				return fmt.Errorf("mount %s dataFile: %w", m.Path, err)
+			}
+			m.Data = s
+		}
+		if m.SchemaFile != "" {
+			s, err := readFileRef(baseDir, m.SchemaFile)
+			if err != nil {
+				return fmt.Errorf("mount %s schemaFile: %w", m.Path, err)
+			}
+			m.Schema = s
+		}
+	}
+	for i := range c.Skills {
+		s := &c.Skills[i]
+		if s.BodyTemplateFile != "" {
+			b, err := readFileRef(baseDir, s.BodyTemplateFile)
+			if err != nil {
+				return fmt.Errorf("skill %s bodyTemplateFile: %w", s.Name, err)
+			}
+			s.BodyTemplate = b
+		}
+		if s.AgentsTemplateFile != "" {
+			a, err := readFileRef(baseDir, s.AgentsTemplateFile)
+			if err != nil {
+				return fmt.Errorf("skill %s agentsTemplateFile: %w", s.Name, err)
+			}
+			s.AgentsTemplate = a
+		}
+	}
+	return nil
+}
+
+// readFileRef reads a file reference, resolving relative paths against baseDir
+// and expanding $VAR in the reference first.
+func readFileRef(baseDir, ref string) (string, error) {
+	ref = os.ExpandEnv(ref)
+	if !filepath.IsAbs(ref) {
+		ref = filepath.Join(baseDir, ref)
+	}
+	b, err := os.ReadFile(ref)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
 }
 
 // BuildFS creates a FileSystem from the config, registering providers and
