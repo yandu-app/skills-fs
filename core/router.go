@@ -210,7 +210,9 @@ func (r *router) match(path string) (routeMatch, error) {
 		}
 	}
 	if n.mount == nil {
-		return routeMatch{}, posix(ENOENT, OpStat, path, nil)
+		if n.static == nil && n.param == nil {
+			return routeMatch{}, posix(ENOENT, OpStat, path, nil)
+		}
 	}
 	return routeMatch{mount: n.mount, params: params}, nil
 }

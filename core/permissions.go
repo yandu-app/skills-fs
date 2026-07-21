@@ -7,7 +7,7 @@ func canAccessNamespace(caller CallerIdentity, mount *MountEntry) bool {
 	if caller.Namespace == "" {
 		return true
 	}
-	if mount.Namespace == "" {
+	if mount == nil || mount.Namespace == "" {
 		return true
 	}
 	return caller.Namespace == mount.Namespace

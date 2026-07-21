@@ -202,7 +202,7 @@ console.log(fs.read("/hello").toString()); // "world"
 
 ```json
 {
-  "skillsRoot": "$HOME/.hermes/skills",
+  "skillsRoot": "$HOME/.skills",
   "providers": [{"id": "napcat", "url": "http://127.0.0.1:18821/invoke"}],
   "includes": ["skills-fs.d/napcat-cli.json"]
 }

@@ -87,6 +87,7 @@ type FileSystem struct {
 	providerCache   map[string]providerCacheEntry
 	cleanup         []func() error
 	cleanupMu       sync.Mutex
+	writeback sync.Map
 	mu              sync.RWMutex
 }
 
@@ -437,6 +438,10 @@ func (fs *FileSystem) Stat(path string, caller CallerIdentity) (st Stat, err err
 		return Stat{}, posix(ENOENT, OpStat, path, nil)
 	}
 	var size int64
+	if m == nil {
+		// Intermediate directory node (no mount, but has children).
+		return Stat{Path: path, Kind: KindDir, Mode: 0o555, UID: fs.cfg.DefaultUID, GID: fs.cfg.DefaultGID, Size: 0}, nil
+	}
 	switch m.Kind {
 	case KindBlob:
 		size = int64(len(m.BlobData))
@@ -487,13 +492,13 @@ func (fs *FileSystem) Readdir(path string, caller CallerIdentity) (entries []Dir
 		rm, err := fs.router.match(path)
 		if err == nil {
 			m := rm.mount
-			if !canAccessNamespace(caller, m) {
+			if m == nil {
+				// Intermediate directory (no mount but has children) - skip mount-level access check.
+			} else if !canAccessNamespace(caller, m) {
 				return nil, posix(ENOENT, OpReaddir, path, nil)
-			}
-			if !canAccess(caller, m.UID, m.GID, m.Mode, OpReaddir) {
+			} else if !canAccess(caller, m.UID, m.GID, m.Mode, OpReaddir) {
 				return nil, posix(EACCES, OpReaddir, path, nil)
-			}
-			if m.Kind != KindDir && m.Kind != KindDynamicDir {
+			} else if m.Kind != KindDir && m.Kind != KindDynamicDir {
 				return nil, posix(ENOTDIR, OpReaddir, path, nil)
 			}
 			matchedMount = m
@@ -584,6 +589,10 @@ func (fs *FileSystem) Read(ctx context.Context, path string, caller CallerIdenti
 		return nil, err
 	}
 	m := rm.mount
+	if m == nil {
+		fs.mu.RUnlock()
+		return nil, posix(ENOTDIR, OpRead, path, fmt.Errorf("not a readable path: %s", path))
+	}
 	if !canAccessNamespace(caller, m) {
 		fs.mu.RUnlock()
 		return nil, posix(ENOENT, OpRead, path, nil)
@@ -598,6 +607,15 @@ func (fs *FileSystem) Read(ctx context.Context, path string, caller CallerIdenti
 		fs.mu.RUnlock()
 		return data, nil
 	case KindAPI:
+		// Writeback: if this mount has writeback enabled, check for stored result first.
+		if m.Writeback {
+			if cached, ok := fs.writeback.Load(path); ok {
+				data := make([]byte, len(cached.([]byte)))
+				copy(data, cached.([]byte))
+				fs.mu.RUnlock()
+				return data, nil
+			}
+		}
 		cap, provider, err := fs.providerFor(m, OpRead, path)
 		params := rm.params
 		fs.mu.RUnlock()
@@ -662,6 +680,10 @@ func (fs *FileSystem) Write(ctx context.Context, path string, payload []byte, ca
 		return err
 	}
 	m := rm.mount
+	if m == nil {
+		fs.mu.RUnlock()
+		return posix(ENOTDIR, OpWrite, path, fmt.Errorf("not a writable path: %s", path))
+	}
 	if !canAccessNamespace(caller, m) {
 		fs.mu.RUnlock()
 		return posix(ENOENT, OpWrite, path, nil)
@@ -693,13 +715,25 @@ func (fs *FileSystem) Write(ctx context.Context, path string, payload []byte, ca
 		cap, provider, err := fs.providerFor(m, OpWrite, path)
 		params := rm.params
 		serial := m.serial
+		writeback := m.Writeback
+		schema := m.Schema
+		p := path // capture before releasing lock
 		fs.mu.RUnlock()
 		if err != nil {
 			return err
 		}
 		return serial.run(func() error {
-			_, err := fs.invokeProvider(ctx, provider, cap, OpWrite, path, params, payload, caller)
+			data, err := fs.invokeProvider(ctx, provider, cap, OpWrite, path, params, payload, caller)
 			fs.recordBreakerResult(cap.ProviderID, err == nil)
+			if writeback {
+				if err != nil {
+					fs.writeback.Store(p, []byte(schemaErrJSON(schema, err, p)))
+					return nil // treat as success so FUSE write doesn't fail
+				}
+				if data != nil {
+					fs.writeback.Store(p, data)
+				}
+			}
 			return err
 		})
 	case KindStream:
@@ -728,6 +762,9 @@ func (fs *FileSystem) Resolve(path string) (MountEntry, map[string]string, error
 	if err != nil {
 		return MountEntry{}, nil, err
 	}
+	if rm.mount == nil {
+		return MountEntry{}, rm.params.ToMap(), fmt.Errorf("not a mounted path: %s", path)
+	}
 	return *rm.mount, rm.params.ToMap(), nil
 }
 
@@ -737,6 +774,9 @@ func (fs *FileSystem) ResolveParams(path string) (MountEntry, ParamSet, error) {
 	rm, err := fs.router.match(path)
 	if err != nil {
 		return MountEntry{}, ParamSet{}, err
+	}
+	if rm.mount == nil {
+		return MountEntry{}, rm.params, fmt.Errorf("not a mounted path: %s", path)
 	}
 	return *rm.mount, rm.params, nil
 }
@@ -1080,13 +1120,13 @@ func (fs *FileSystem) listDynamicDir(ctx context.Context, m *MountEntry, path st
 		// If the provider did not specify a kind, try to infer it from any
 		// nested mount registered at the child path.
 		if entries[i].Kind == "" {
-			if rm, err := fs.router.match(childPath); err == nil {
-				entries[i].Kind = rm.mount.Kind
-				entries[i].Mode = rm.mount.Mode
-			} else {
-				entries[i].Kind = KindDir
-				entries[i].Mode = 0o555
-			}
+		if rm, err := fs.router.match(childPath); err == nil && rm.mount != nil {
+			entries[i].Kind = rm.mount.Kind
+			entries[i].Mode = rm.mount.Mode
+		} else {
+			entries[i].Kind = KindDir
+			entries[i].Mode = 0o555
+		}
 		}
 	}
 	return entries, nil
@@ -1145,4 +1185,28 @@ func mergeDirEntries(a, b []DirEntry) []DirEntry {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
+}
+
+// schemaErrJSON builds a JSON error response with the expected schema for
+// writeback mounts. When a write fails (JSON parse error or provider error),
+// the resulting JSON is stored so a subsequent read returns the schema hint.
+func schemaErrJSON(schema string, err error, p string) []byte {
+	// Try to parse schema as JSON for pretty embedding; fall back to raw string.
+	var schemaObj interface{}
+	schemaRaw := json.RawMessage{}
+	if schema != "" {
+		if jerr := json.Unmarshal([]byte(schema), &schemaObj); jerr != nil {
+			// Not valid JSON object — treat as raw text.
+			schemaObj = schema
+		} else if jerr2 := json.Unmarshal([]byte(schema), &schemaRaw); jerr2 == nil {
+			// Valid JSON — embed as raw message so it preserves formatting.
+			schemaObj = schemaRaw
+		}
+	}
+	b, _ := json.Marshal(map[string]interface{}{
+		"error":           err.Error(),
+		"expected_schema": schemaObj,
+		"hint":            "write valid JSON matching expected_schema; see " + p + ".schema",
+	})
+	return b
 }

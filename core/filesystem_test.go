@@ -443,6 +443,58 @@ func TestReaddirRootAndNestedMounts(t *testing.T) {
 	}
 }
 
+func TestIntermediateDirHasNoDirectMount(t *testing.T) {
+	fs := NewFS(GlobalConfig{})
+	// Only a deep leaf is mounted; /x/y is an intermediate dir with no own mount.
+	if err := fs.Mount("/x/y/leaf", MountEntry{Kind: KindBlob, Mode: 0o444, BlobData: []byte("L")}); err != nil {
+		t.Fatal(err)
+	}
+	st, err := fs.Stat("/x/y", CallerIdentity{})
+	if err != nil {
+		t.Fatalf("Stat intermediate dir: %v", err)
+	}
+	if st.Kind != KindDir {
+		t.Fatalf("intermediate dir Kind = %v, want KindDir", st.Kind)
+	}
+	// Reading an intermediate dir is ENOTDIR, not a nil-pointer panic.
+	if _, err := fs.Read(context.Background(), "/x/y", CallerIdentity{}); err == nil {
+		t.Fatal("expected ENOTDIR reading intermediate dir, got nil")
+	}
+	entries, err := fs.Readdir("/x/y", CallerIdentity{})
+	if err != nil {
+		t.Fatalf("Readdir intermediate: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Name != "leaf" {
+		t.Fatalf("entries = %#v, want [leaf]", entries)
+	}
+}
+
+func TestWritebackCachesWriteResult(t *testing.T) {
+	provider := &fakeProvider{id: "p", response: []byte(`{"status":"ok","id":7}`)}
+	fs := NewFS(GlobalConfig{})
+	if err := fs.RegisterProvider(provider); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Mount("/send", MountEntry{
+		Kind:      KindAPI,
+		Mode:      0o644, // readable so the writeback cache can be read back
+		Writeback: true,
+		Ops: map[OpCode]*CapConfig{OpWrite: {ProviderID: "p", Action: "send"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Write(context.Background(), "/send", []byte(`{"msg":"hi"}`), CallerIdentity{}); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	got, err := fs.Read(context.Background(), "/send", CallerIdentity{})
+	if err != nil {
+		t.Fatalf("read after writeback: %v", err)
+	}
+	if string(got) != `{"status":"ok","id":7}` {
+		t.Fatalf("writeback read = %q, want provider response", got)
+	}
+}
+
 func TestReaddirErrors(t *testing.T) {
 	fs := NewFS(GlobalConfig{})
 	if err := fs.Mount("/blob", MountEntry{Kind: KindBlob}); err != nil {
