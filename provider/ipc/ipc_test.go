@@ -4,9 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"runtime"
 	"testing"
 	"time"
 )
+
+func newShellProvider(id, unixScript, windowsScript string) *Provider {
+	if runtime.GOOS == "windows" {
+		return NewProvider(id, "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", windowsScript)
+	}
+	return NewProvider(id, "sh", "-c", unixScript)
+}
 
 func TestIPCProviderWithEnvAndDir(t *testing.T) {
 	p := NewProvider("ipc-cfg", "sh", "-c", "echo ok").
@@ -25,7 +33,7 @@ func TestIPCProviderInvokeSuccess(t *testing.T) {
 	// Subprocess that echoes a valid JSON response with base64-encoded data.
 	resp := ipcResponse{Data: []byte("hello-ipc"), ContentType: "text/plain"}
 	respJSON, _ := json.Marshal(resp)
-	p := NewProvider("ipc-echo", "sh", "-c", fmt.Sprintf("echo '%s'", respJSON))
+	p := newShellProvider("ipc-echo", fmt.Sprintf("echo '%s'", respJSON), fmt.Sprintf("Write-Output '%s'", respJSON))
 
 	result, err := p.Invoke(context.Background(), "greet", map[string]interface{}{"name": "world"})
 	if err != nil {
@@ -42,7 +50,7 @@ func TestIPCProviderInvokeSuccess(t *testing.T) {
 func TestIPCProviderInvokeErrorResponse(t *testing.T) {
 	resp := ipcResponse{Error: "bad-action"}
 	respJSON, _ := json.Marshal(resp)
-	p := NewProvider("ipc-err", "sh", "-c", fmt.Sprintf("echo '%s'", respJSON))
+	p := newShellProvider("ipc-err", fmt.Sprintf("echo '%s'", respJSON), fmt.Sprintf("Write-Output '%s'", respJSON))
 
 	_, err := p.Invoke(context.Background(), "bad", nil)
 	if err == nil {
@@ -54,7 +62,7 @@ func TestIPCProviderInvokeErrorResponse(t *testing.T) {
 }
 
 func TestIPCProviderInvokeExitError(t *testing.T) {
-	p := NewProvider("ipc-fail", "sh", "-c", "echo fail-msg >&2; exit 1")
+	p := newShellProvider("ipc-fail", "echo fail-msg >&2; exit 1", "[Console]::Error.WriteLine('fail-msg'); exit 1")
 
 	_, err := p.Invoke(context.Background(), "x", nil)
 	if err == nil {
@@ -63,7 +71,7 @@ func TestIPCProviderInvokeExitError(t *testing.T) {
 }
 
 func TestIPCProviderInvokeInvalidJSON(t *testing.T) {
-	p := NewProvider("ipc-badjson", "sh", "-c", "echo 'not-json'")
+	p := newShellProvider("ipc-badjson", "echo 'not-json'", "Write-Output 'not-json'")
 
 	_, err := p.Invoke(context.Background(), "x", nil)
 	if err == nil {
@@ -72,7 +80,7 @@ func TestIPCProviderInvokeInvalidJSON(t *testing.T) {
 }
 
 func TestIPCProviderInvokeTimeout(t *testing.T) {
-	p := NewProvider("ipc-slow", "sh", "-c", "sleep 10").
+	p := newShellProvider("ipc-slow", "sleep 10", "Start-Sleep -Seconds 10").
 		WithTimeout(50 * time.Millisecond)
 
 	_, err := p.Invoke(context.Background(), "x", nil)
@@ -92,7 +100,7 @@ func TestIPCProviderID(t *testing.T) {
 }
 
 func TestIPCProviderInvokeContextCancellation(t *testing.T) {
-	p := NewProvider("ipc-cancel", "sh", "-c", "sleep 10")
+	p := newShellProvider("ipc-cancel", "sleep 10", "Start-Sleep -Seconds 10")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)

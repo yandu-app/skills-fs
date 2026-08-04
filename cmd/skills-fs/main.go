@@ -329,8 +329,7 @@ func cmdFUSE(args []string) int {
 	if err := server.Mount(context.Background()); err != nil {
 		slog.Error("mount", "err", err)
 		return 1
-}
-	fmt.Fprintln(os.Stderr, "DEBUG: mount succeeded, waiting for signal")
+	}
 	slog.Info("fuse mounted", "path", server.MountPoint())
 
 	sigCh := make(chan os.Signal, 1)
@@ -371,8 +370,8 @@ func cmdStop(args []string) int {
 	// For FUSE daemons, unmount the filesystem before sending SIGTERM so any
 	// process currently blocked on a FUSE request is released before the
 	// userspace daemon goes away. This prevents D-state stuck processes.
-	if runtime.GOOS == "linux" && *mountpoint != "" {
-		_ = syscall.Unmount(*mountpoint, 0)
+	if *mountpoint != "" {
+		unmountBeforeStop(*mountpoint)
 	}
 
 	proc, err := os.FindProcess(pid)

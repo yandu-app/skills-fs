@@ -21,7 +21,7 @@ type fakeProvider struct {
 	mu       sync.Mutex
 	calls    []providerCall
 	response []byte
-	invokeCh chan struct{}   // test hook: receives signal when Invoke completes
+	invokeCh chan struct{} // test hook: receives signal when Invoke completes
 }
 
 type blockingProvider struct {
@@ -479,7 +479,7 @@ func TestWritebackCachesWriteResult(t *testing.T) {
 		Kind:      KindAPI,
 		Mode:      0o644, // readable so the writeback cache can be read back
 		Writeback: true,
-		Ops: map[OpCode]*CapConfig{OpWrite: {ProviderID: "p", Action: "send"}},
+		Ops:       map[OpCode]*CapConfig{OpWrite: {ProviderID: "p", Action: "send"}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -2470,7 +2470,7 @@ func TestNoWritebackWithoutFlag(t *testing.T) {
 	// Writeback=false (default): read should invoke provider, not return cached.
 	if err := fs.Mount("/cmd", MountEntry{
 		Kind: KindAPI,
-		Mode:      0o666,
+		Mode: 0o666,
 		Ops: map[OpCode]*CapConfig{
 			OpRead:  {ProviderID: "p", Action: "read"},
 			OpWrite: {ProviderID: "p", Action: "write"},
@@ -2546,6 +2546,8 @@ func TestRawWriteParamsPassesTrimmedPayload(t *testing.T) {
 	if !ok || id != "42" {
 		t.Fatalf("expected path param id=42, got %v", id)
 	}
+}
+
 func TestDeterministicCacheKey(t *testing.T) {
 	// Same params in different map iteration orders must produce the same key.
 	params := map[string]interface{}{

@@ -21,7 +21,7 @@ func TestFuseStub(t *testing.T) {
 	}
 
 	err := server.Mount(context.Background())
-	if runtime.GOOS != "linux" {
+	if runtime.GOOS != "linux" && runtime.GOOS != "windows" {
 		if !errors.Is(err, adapter.ErrNotImplemented) {
 			t.Fatalf("expected ErrNotImplemented, got %v", err)
 		}
@@ -29,10 +29,11 @@ func TestFuseStub(t *testing.T) {
 			t.Fatalf("expected ErrNotImplemented, got %v", err)
 		}
 	} else {
-		// On Linux the adapter attempts a real FUSE mount. /mnt/skills does not
-		// exist, so we expect a real error rather than ErrNotImplemented.
+		// On Linux and Windows the adapter attempts a real FUSE/WinFsp mount.
+		// /mnt/skills does not exist, so expect a platform error rather than the
+		// unsupported-platform sentinel.
 		if errors.Is(err, adapter.ErrNotImplemented) {
-			t.Fatalf("expected real mount error on Linux, got ErrNotImplemented")
+			t.Fatalf("expected real mount error on %s, got ErrNotImplemented", runtime.GOOS)
 		}
 	}
 }

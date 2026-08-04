@@ -2,6 +2,8 @@ package local
 
 import (
 	"context"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -73,8 +75,14 @@ func TestLocalProviderContextCancellation(t *testing.T) {
 
 func TestLocalProviderEnv(t *testing.T) {
 	p := NewProvider()
-	res, err := p.Invoke(context.Background(), "sh", map[string]interface{}{
-		"args": []string{"-c", "echo $TEST_VAR"},
+	command := "sh"
+	args := []string{"-c", "echo $TEST_VAR"}
+	if runtime.GOOS == "windows" {
+		command = "powershell.exe"
+		args = []string{"-NoProfile", "-NonInteractive", "-Command", "[Console]::Out.Write($env:TEST_VAR)"}
+	}
+	res, err := p.Invoke(context.Background(), command, map[string]interface{}{
+		"args": args,
 		"env":  []string{"TEST_VAR=hello-env"},
 	})
 	if err != nil {
@@ -87,13 +95,15 @@ func TestLocalProviderEnv(t *testing.T) {
 
 func TestLocalProviderDir(t *testing.T) {
 	p := NewProvider()
+	dir := t.TempDir()
 	res, err := p.Invoke(context.Background(), "pwd", map[string]interface{}{
-		"dir": "/tmp",
+		"dir": dir,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(res.Data), "/tmp") {
-		t.Fatalf("expected /tmp in output, got: %q", res.Data)
+	got := filepath.Clean(strings.TrimSpace(string(res.Data)))
+	if got != filepath.Clean(dir) {
+		t.Fatalf("expected %q in output, got: %q", dir, res.Data)
 	}
 }
